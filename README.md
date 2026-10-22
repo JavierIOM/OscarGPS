@@ -120,6 +120,25 @@ Bluetooth client connected or disconnected. NMEA parsers skip lines that don't s
 To change the Bluetooth name, the I2C address or the sentence mix, edit the defines and the
 `PMTK314` command near the top of `src/main.cpp`.
 
+## Display (optional)
+
+A 128x64 I2C OLED (the common 0.96" SSD1306 or 1.3" SH1106 modules with four pins) shows:
+
+```
+     19:42:07        UTC
+      IO74re         6-character grid, or "no fix"
+7 sats     BT linked
+```
+
+Wire its VCC, GND, SDA and SCL to the same four lines as the GPS. It sits at 0x3C (or 0x3D)
+and the GPS at 0x10, so they share the bus. Use one screen: two modules on the same address
+will fight. The controller type is detected at boot. Without a screen everything else works
+as normal, and a screen plugged in later is picked up within 5 seconds.
+
+"BT linked" means a Bluetooth client has the serial port open. The board can't tell which
+program that is. To slow burn-in, the contrast is turned down and the text moves a pixel or two
+each minute.
+
 ## LED
 
 On the FireBeetle the on-board LED is GPIO2.

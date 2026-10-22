@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.0] - 2026-10-22
+
+### Added
+- Optional 128x64 I2C OLED on the GPS bus showing UTC, the 6-character Maidenhead grid,
+  satellite count and Bluetooth link state. SSD1306 or SH1106 is detected at boot from the
+  status byte (Meshtastic's probe), at 0x3C or 0x3D. A screen plugged in later is picked up
+  within 5 seconds.
+- Burn-in care: contrast 96 of 255, and the layout shifts by up to 2 px each minute.
+- Redraws happen after each RMC, at the end of the NMEA burst, so the ~95 ms I2C transfer never
+  delays a sentence.
+
 ## [1.0.1] - 2026-10-22
 
 ### Added
