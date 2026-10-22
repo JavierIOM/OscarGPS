@@ -11,6 +11,10 @@
 - Redraws happen after each RMC, at the end of the NMEA burst, so the ~95 ms I2C transfer never
   delays a sentence.
 
+### Changed
+- CPU runs at 80 MHz instead of 240, the lowest Bluetooth allows, for battery life.
+- The LED stays off when a screen is fitted.
+
 ## [1.0.1] - 2026-10-22
 
 ### Added

@@ -285,10 +285,13 @@ static void drawOled() {
 }
 
 // Fast blink: no GPS on the bus. One flash a second: searching. Solid: fix.
+// With a screen fitted the screen says it all, so the LED stays off to save battery.
 static void updateLed() {
   uint32_t now = millis();
   bool on;
-  if (!gpsPresent) {
+  if (oled) {
+    on = false;
+  } else if (!gpsPresent) {
     on = (now / 100) % 2;
   } else if (fixQuality > 0) {
     on = true;
@@ -299,10 +302,11 @@ static void updateLed() {
 }
 
 void setup() {
+  setCpuFrequencyMhz(80);  // lowest clock Bluetooth runs at; saves battery
   pinMode(LED_PIN, OUTPUT);
   Serial.begin(115200);
   delay(200);
-  status("OscarGPS %s", FW_VERSION);
+  status("OscarGPS %s, CPU %u MHz", FW_VERSION, getCpuFrequencyMhz());
 
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(100000);

@@ -141,7 +141,8 @@ each minute.
 
 ## LED
 
-On the FireBeetle the on-board LED is GPIO2.
+On the FireBeetle the on-board LED is GPIO2. It stays off when a screen is fitted, to save
+battery.
 
 | Pattern | Meaning |
 |---------|---------|
