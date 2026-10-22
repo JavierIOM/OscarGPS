@@ -6,8 +6,11 @@
 - MIT licence.
 - README rewritten for anyone building one: other ESP32 boards, Linux pairing, the timing
   limits of NMEA, troubleshooting (including OscarWatch not reconnecting after a reboot).
+- Prebuilt release images: a full image for `0x0` and an app-only image for `0x10000`.
 
 ### Changed
+- `strip_paths.py` pre-script maps local build paths out of `__FILE__`, so the binary carries
+  no home directory from the machine it was built on.
 - I2C pins are now `I2C_SDA` / `I2C_SCL` defines at the top of `main.cpp`.
 - `platformio.ini` no longer pins a COM port; PlatformIO auto-detects it.
 

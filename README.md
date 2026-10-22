@@ -30,6 +30,27 @@ The GPS sentences go out over USB serial as well, so it also works as a wired GP
 GPIO21 and GPIO22 are the default I2C pins on most ESP32 boards. If yours differ, change
 `I2C_SDA` and `I2C_SCL` at the top of `src/main.cpp`.
 
+## Flash a prebuilt binary
+
+Each [release](https://github.com/JavierIOM/OscarGPS/releases) has two images for an original
+ESP32 with 4 MB of flash or more, with SHA-256 checksums:
+
+| File | Flash at | Use it for |
+|------|----------|-----------|
+| `OscarGPS-x.y.z-esp32-full.bin` | `0x0` | A new board. Bootloader, partition table and app in one |
+| `OscarGPS-x.y.z-esp32-app.bin` | `0x10000` | Updating a board already running OscarGPS. Keeps its Bluetooth pairing |
+
+The full image overwrites the area where the ESP32 stores its Bluetooth pairings, so after
+flashing it, remove `OscarGPS` from your PC's Bluetooth devices and pair it again.
+
+In Chrome or Edge, the [esptool-js web flasher](https://espressif.github.io/esptool-js/) needs
+nothing installed: Connect, set the address, pick the file, Program. Or with
+[esptool](https://github.com/espressif/esptool):
+
+```
+esptool.py --chip esp32 write_flash 0x0 OscarGPS-1.0.1-esp32-full.bin
+```
+
 ## Build and flash
 
 You need [PlatformIO](https://platformio.org/), either the VS Code extension or the CLI.
