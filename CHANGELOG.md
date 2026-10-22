@@ -14,6 +14,7 @@
 ### Changed
 - CPU runs at 80 MHz instead of 240, the lowest Bluetooth allows, for battery life.
 - The LED stays off when a screen is fitted.
+- The time is tagged "UTC" on screen so nobody mistakes it for local time.
 
 ## [1.0.1] - 2026-10-22
 

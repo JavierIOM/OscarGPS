@@ -268,8 +268,16 @@ static void drawOled() {
     oled->setFont(u8g2_font_helvB14_tr);
     drawCentred("No GPS", 38 + dy, dx);
   } else {
+    // Time plus a small "UTC" tag on the same baseline, centred as a pair
+    const char *t = *utcText ? utcText : "--:--:--";
+    oled->setFont(u8g2_font_6x10_tr);
+    int tagW = oled->getStrWidth("UTC");
     oled->setFont(u8g2_font_logisoso20_tn);
-    drawCentred(*utcText ? utcText : "--:--:--", 22 + dy, dx);
+    int timeW = oled->getStrWidth(t);
+    int x = (128 - (timeW + 3 + tagW)) / 2 - 1 + dx;
+    oled->drawStr(x, 22 + dy, t);
+    oled->setFont(u8g2_font_6x10_tr);
+    oled->drawStr(x + timeW + 3, 22 + dy, "UTC");
 
     oled->setFont(u8g2_font_helvB14_tr);
     drawCentred(fixQuality > 0 && *gridText ? gridText : "no fix", 44 + dy, dx);

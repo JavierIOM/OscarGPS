@@ -125,10 +125,13 @@ To change the Bluetooth name, the I2C address or the sentence mix, edit the defi
 A 128x64 I2C OLED (the common 0.96" SSD1306 or 1.3" SH1106 modules with four pins) shows:
 
 ```
-     19:42:07        UTC
-      IO74re         6-character grid, or "no fix"
+   19:42:07 UTC
+      IO74re
 7 sats     BT linked
 ```
+
+That's the time in UTC (not local time), the 6-character grid locator (or "no fix"), the
+satellites in use and the Bluetooth link.
 
 Wire its VCC, GND, SDA and SCL to the same four lines as the GPS. It sits at 0x3C (or 0x3D)
 and the GPS at 0x10, so they share the bus. Use one screen: two modules on the same address
