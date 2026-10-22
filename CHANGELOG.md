@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.1] - 2026-10-22
+
+### Added
+- MIT licence.
+- README rewritten for anyone building one: other ESP32 boards, Linux pairing, the timing
+  limits of NMEA, troubleshooting (including OscarWatch not reconnecting after a reboot).
+
+### Changed
+- I2C pins are now `I2C_SDA` / `I2C_SCL` defines at the top of `main.cpp`.
+- `platformio.ini` no longer pins a COM port; PlatformIO auto-detects it.
+
 ## [1.0.0] - 2026-10-22
 
 ### Added

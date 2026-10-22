@@ -13,6 +13,8 @@
 #endif
 
 #define BT_NAME         "OscarGPS"
+#define I2C_SDA         21
+#define I2C_SCL         22
 #define GPS_I2C_ADDR    0x10
 #define I2C_CHUNK       64     // bytes per read; the PA1010D pads with 0x0A once its buffer is empty
 #define I2C_MAX_CHUNKS  16     // cap on one drain so the loop never stalls
@@ -194,12 +196,12 @@ void setup() {
   delay(200);
   status("OscarGPS %s", FW_VERSION);
 
-  Wire.begin(SDA, SCL);
+  Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(100000);
   scanI2c();
 
   if (!probeGps()) {
-    status("No GPS at 0x%02X, check the STEMMA cable (SDA %d, SCL %d)", GPS_I2C_ADDR, SDA, SCL);
+    status("No GPS at 0x%02X, check the STEMMA cable (SDA %d, SCL %d)", GPS_I2C_ADDR, I2C_SDA, I2C_SCL);
   }
 
   if (SerialBT.begin(BT_NAME)) {
