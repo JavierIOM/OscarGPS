@@ -286,7 +286,7 @@ static void drawOled() {
     snprintf(sats, sizeof(sats), "%u sats", satellites);
     oled->setFont(u8g2_font_6x10_tr);
     oled->drawStr(dx, 62 + dy - 1, sats);
-    const char *bt = btConnected ? "BT linked" : "BT idle";
+    const char *bt = btConnected ? "Oscar linked" : "not linked";
     oled->drawStr(126 - oled->getStrWidth(bt) + dx, 62 + dy - 1, bt);
   }
   oled->sendBuffer();

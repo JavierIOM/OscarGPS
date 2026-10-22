@@ -127,7 +127,7 @@ A 128x64 I2C OLED (the common 0.96" SSD1306 or 1.3" SH1106 modules with four pin
 ```
    19:42:07 UTC
       IO74re
-7 sats     BT linked
+7 sats  Oscar linked
 ```
 
 That's the time in UTC (not local time), the 6-character grid locator (or "no fix"), the
@@ -138,9 +138,9 @@ and the GPS at 0x10, so they share the bus. Use one screen: two modules on the s
 will fight. The controller type is detected at boot. Without a screen everything else works
 as normal, and a screen plugged in later is picked up within 5 seconds.
 
-"BT linked" means a Bluetooth client has the serial port open. The board can't tell which
-program that is. To slow burn-in, the contrast is turned down and the text moves a pixel or two
-each minute.
+"Oscar linked" means a Bluetooth client has the serial port open ("not linked" otherwise). The
+board can't tell which program that is. To slow burn-in, the contrast is turned down and the
+text moves a pixel or two each minute.
 
 ## LED
 
