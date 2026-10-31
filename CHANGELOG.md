@@ -10,6 +10,8 @@
 - Burn-in care: contrast 96 of 255, and the layout shifts by up to 2 px each minute.
 - Redraws happen after each RMC, at the end of the NMEA burst, so the ~95 ms I2C transfer never
   delays a sentence.
+- README troubleshooting for Windows Bluetooth COM ports that wedge with "cannot find the file
+  specified".
 
 ### Changed
 - CPU runs at 80 MHz instead of 240, the lowest Bluetooth allows, for battery life.

@@ -48,7 +48,7 @@ nothing installed: Connect, set the address, pick the file, Program. Or with
 [esptool](https://github.com/espressif/esptool):
 
 ```
-esptool.py --chip esp32 write_flash 0x0 OscarGPS-1.0.1-esp32-full.bin
+esptool.py --chip esp32 write_flash 0x0 OscarGPS-1.1.0-esp32-full.bin
 ```
 
 ## Build and flash
@@ -165,6 +165,10 @@ Keep NTP for that.
 - **"Access is denied" opening the port:** another program already has it. Only one program can
   open a COM port at a time.
 - **Port opens but no data:** you picked the Incoming Bluetooth port. Use the Outgoing one.
+- **"The system cannot find the file specified" opening the Bluetooth port**, while Device
+  Manager says the port is fine: Windows' Bluetooth serial layer has wedged. The board isn't at
+  fault (the screen will show "not linked"). Turn Bluetooth off and on in Windows and reopen
+  the port.
 - **Data stopped after the board rebooted or lost power:** the PC opens the Bluetooth link, so
   the board can't restart it. OscarWatch doesn't reopen the port by itself, so turn GPS off and
   on in its settings.
