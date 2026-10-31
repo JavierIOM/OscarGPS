@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.0] - 2026-10-31
+
+### Added
+- Retro BIOS boot screen when a screen is fitted, like the RAPT and weather displays: title
+  bar, CPU/flash/Bluetooth MAC/I2C table, then a scrolling peripheral check with dot leaders.
+  The results are real: GPS, display, battery sense, Bluetooth and the first NMEA sentence each
+  report OK, NONE, FAIL, WAIT or the battery voltage. Adds about 5 seconds to boot; none
+  without a screen.
+
+### Removed
+- The plain "OscarGPS / version" splash, which the BIOS screen replaces.
+
 ## [1.2.0] - 2026-10-31
 
 ### Added

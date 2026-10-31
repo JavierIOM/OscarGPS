@@ -10,6 +10,7 @@
 #include <Wire.h>
 #include <BluetoothSerial.h>
 #include <esp_bt_device.h>
+#include <esp_system.h>
 #include <U8g2lib.h>
 
 #if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED) || !defined(CONFIG_BT_SPP_ENABLED)
@@ -38,6 +39,8 @@
 
 BluetoothSerial SerialBT;
 static U8G2 *oled = nullptr;
+static const char *oledName = "";
+static uint8_t oledAddr = 0;
 
 // Satellites in view, from GSV. sys is the talker's second letter: P GPS, L GLONASS,
 // A Galileo, B BeiDou.
@@ -354,14 +357,9 @@ static bool probeOled() {
     oled->setBusClock(100000);  // the GPS shares the bus; a redraw is ~95 ms, done between bursts
     oled->begin();
     oled->setContrast(OLED_CONTRAST);
-    status("OLED at 0x%02X (status 0x%02X), driving it as %s", addr, st, sh1106 ? "SH1106" : "SSD1306");
-
-    oled->clearBuffer();
-    oled->setFont(u8g2_font_helvB14_tr);
-    oled->drawStr((128 - oled->getStrWidth("OscarGPS")) / 2, 30, "OscarGPS");
-    oled->setFont(u8g2_font_6x10_tr);
-    oled->drawStr((128 - oled->getStrWidth(FW_VERSION)) / 2, 48, FW_VERSION);
-    oled->sendBuffer();
+    oledName = sh1106 ? "SH1106" : "SSD1306";
+    oledAddr = addr;
+    status("OLED at 0x%02X (status 0x%02X), driving it as %s", addr, st, oledName);
     return true;
   }
   return false;
@@ -610,6 +608,64 @@ static void drawOled() {
   oled->sendBuffer();
 }
 
+// ── Retro BIOS boot screen ────────────────────────────────────────────────
+// Same idea as the RAPT and weather displays' POST, cut down to 128x64 and mono.
+// Fixed-width 4x6 font on purpose: the dot leaders line up on its 4 px advance, 32
+// columns. Title bar stays put; the rows below scroll like a real POST. Unlike theirs,
+// the checks are real: each result is what the probe actually found.
+// Does nothing without a screen, so a headless board boots at full speed.
+#define POST_ROWS    7
+#define POST_COLS    32
+#define POST_DOT_COL 26   // dots run to here, then " RESULT" (up to 5 chars)
+static char postRows[POST_ROWS][POST_COLS + 1];
+static int postUsed = 0;
+static uint32_t postCheckMs = 0;
+
+static void postRedraw() {
+  oled->clearBuffer();
+  oled->setFont(u8g2_font_4x6_tr);
+  oled->drawStr(0, 5, "OSCARGPS BIOS v" FW_VERSION);
+  oled->drawStr(0, 11, "(C) 2026 2D0PEY");
+  oled->drawHLine(0, 13, 128);
+  for (int i = 0; i < postUsed; i++) oled->drawStr(0, 21 + i * 7, postRows[i]);
+  oled->sendBuffer();
+}
+
+static void postLine(int pauseMs, const char *fmt, ...) {
+  if (!oled) return;
+  if (postUsed == POST_ROWS) {
+    memmove(postRows[0], postRows[1], sizeof(postRows[0]) * (POST_ROWS - 1));
+    postUsed--;
+  }
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(postRows[postUsed++], POST_COLS + 1, fmt, args);
+  va_end(args);
+  postRedraw();
+  delay(pauseMs);
+}
+
+// Label and dot leader now; the result lands on the same row once the check is done.
+static void postBegin(const char *label) {
+  if (!oled) return;
+  char buf[POST_COLS + 1];
+  int n = snprintf(buf, sizeof(buf), "%s ", label);
+  while (n < POST_DOT_COL) buf[n++] = '.';
+  buf[n] = '\0';
+  postLine(0, "%s", buf);
+  postCheckMs = millis();
+}
+
+static void postResult(const char *result) {
+  if (!oled) return;
+  int32_t wait = 350 - (int32_t)(millis() - postCheckMs);  // a check always takes a beat
+  if (wait > 0) delay(wait);
+  char *row = postRows[postUsed - 1];
+  snprintf(row + strlen(row), POST_COLS + 1 - strlen(row), " %s", result);
+  postRedraw();
+  delay(60);
+}
+
 // Fast blink: no GPS on the bus. One flash a second: searching. Solid: fix.
 // With a screen fitted the screen says it all, so the LED stays off to save battery.
 static void updateLed() {
@@ -638,26 +694,71 @@ void setup() {
   Wire.setClock(100000);
   scanI2c();
 
+  // Screen first, so the POST has somewhere to draw
+  if (!probeOled()) status("No OLED at 0x3C or 0x3D, carrying on without one");
+
+  uint8_t btMac[6];
+  esp_read_mac(btMac, ESP_MAC_BT);
+  postLine(90, "CPU  : %s r%d %uMHz", ESP.getChipModel(), ESP.getChipRevision(), getCpuFrequencyMhz());
+  postLine(90, "Flash: %uMB  SRAM: 520KB", ESP.getFlashChipSize() / (1024 * 1024));
+  postLine(90, "BT   : %02X:%02X:%02X:%02X:%02X:%02X",
+           btMac[0], btMac[1], btMac[2], btMac[3], btMac[4], btMac[5]);
+  postLine(90, "I2C  : SDA%d SCL%d 100kHz", I2C_SDA, I2C_SCL);
+  postLine(250, "Detecting peripherals...");
+
+  postBegin("GPS PA1010D 0x10");
   if (!probeGps()) {
     status("No GPS at 0x%02X, check the STEMMA cable (SDA %d, SCL %d)", GPS_I2C_ADDR, I2C_SDA, I2C_SCL);
   }
-  if (!probeOled()) status("No OLED at 0x3C or 0x3D, carrying on without one");
+  postResult(gpsPresent ? "OK" : "NONE");
 
+  if (oled) {
+    char label[24];
+    snprintf(label, sizeof(label), "Display %s 0x%02X", oledName, oledAddr);
+    postBegin(label);
+    postResult("OK");
+  }
+
+  postBegin("Battery sense A0");
   analogSetPinAttenuation(BATT_PIN, ADC_11db);
   readBattery();
+  char batt[8] = "NONE";
+  if (battVolts > BATT_USB_V) {
+    strcpy(batt, "USB");
+  } else if (battVolts > 0) {
+    snprintf(batt, sizeof(batt), "%.2fV", battVolts);
+  }
   if (battVolts > 0) {
     status("Battery sense on A0: %.2f V%s", battVolts, battVolts > BATT_USB_V ? " (USB)" : "");
   } else {
     status("No battery divider on A0");
   }
+  postResult(batt);
 
-  if (SerialBT.begin(BT_NAME)) {
+  postBegin("Bluetooth SPP");
+  bool btOk = SerialBT.begin(BT_NAME);
+  if (btOk) {
     const uint8_t *mac = esp_bt_dev_get_address();
     status("Bluetooth up as %s, %02X:%02X:%02X:%02X:%02X:%02X", BT_NAME,
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   } else {
     status("Bluetooth failed to start");
   }
+  postResult(btOk ? "OK" : "FAIL");
+
+  // First valid GGA from the GPS proves the whole I2C and NMEA path
+  if (gpsPresent && oled) {
+    postBegin("NMEA stream");
+    uint32_t start = millis();
+    while (!lastGgaMs && millis() - start < 2500) {
+      pollGps();
+      delay(IDLE_POLL_MS);
+    }
+    postResult(lastGgaMs ? "OK" : "WAIT");
+  }
+
+  postLine(150, "Press DEL to enter SETUP");
+  postLine(2000, "Starting OscarGPS...");
 }
 
 void loop() {

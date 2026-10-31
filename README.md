@@ -142,6 +142,22 @@ as normal, and a screen plugged in later is picked up within 5 seconds.
 board can't tell which program that is. To slow burn-in, the contrast is turned down and the
 text moves a pixel or two each minute.
 
+### Boot screen
+
+At power-on the screen runs a retro BIOS POST: firmware version, CPU, flash, the Bluetooth
+address and I2C pins, then a check of each part with a dot leader and its result:
+
+```
+GPS PA1010D 0x10 ......... OK
+Display SH1106 0x3C ...... OK
+Battery sense A0 ....... 4.05V
+Bluetooth SPP ............ OK
+NMEA stream .............. OK
+```
+
+The checks are real. A missing GPS shows NONE, a GPS that hasn't sent a sentence yet shows
+WAIT, and so on. It takes about 5 seconds, and is skipped when no screen is fitted.
+
 ### Pages
 
 With satellites in view the screen cycles every 20 seconds:
