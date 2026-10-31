@@ -48,7 +48,7 @@ nothing installed: Connect, set the address, pick the file, Program. Or with
 [esptool](https://github.com/espressif/esptool):
 
 ```
-esptool.py --chip esp32 write_flash 0x0 OscarGPS-1.2.0-esp32-full.bin
+esptool.py --chip esp32 write_flash 0x0 OscarGPS-1.3.0-esp32-full.bin
 ```
 
 ## Build and flash
