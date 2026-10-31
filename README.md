@@ -110,7 +110,7 @@ Settings, GPS:
 
 ## What it sends
 
-RMC, GGA and GSA once a second, and GSV every fifth second. The talker IDs are the ones the module
+RMC, GGA, GSA and GSV once a second. The talker IDs are the ones the module
 uses (`$GN` for combined fixes, `$GP` and `$GL` for each constellation). Every sentence's checksum
 is checked before it goes out.
 
@@ -141,6 +141,45 @@ as normal, and a screen plugged in later is picked up within 5 seconds.
 "Oscar linked" means a Bluetooth client has the serial port open ("not linked" otherwise). The
 board can't tell which program that is. To slow burn-in, the contrast is turned down and the
 text moves a pixel or two each minute.
+
+### Pages
+
+With satellites in view the screen cycles every 20 seconds:
+
+| Page | Shows | Time on screen |
+|------|-------|----------------|
+| Main | UTC, grid, satellites in use, link, battery | 10 s |
+| Sky plot | Each satellite at its azimuth and elevation, labelled with its PRN. Reversed (white box) means it's in the fix. Outer ring is the horizon, inner ring 45 degrees, north up. Used/in-view per system, HDOP and battery volts on the right | 5 s |
+| Signal | A bar per satellite, height from its SNR (0 to 50 dB-Hz), PRN underneath. Solid bars are in the fix, hollow ones are tracked but unused. Up to 12, those in the fix first | 5 s |
+
+The GPS is set to report its satellite list every second so the pages update live.
+
+## Battery gauge (optional)
+
+The FireBeetle has a LiPo socket and charger but no battery sense on its analogue pins (the
+on-board divider on the V4.0 board isn't connected to A0 as shipped). Two resistors fix that:
+
+```
+   VCC o──────┐
+              │
+             [ ] R1 100k
+              │
+A0/IO36 o─────┤
+              │
+             [ ] R2 100k
+              │
+   GND o──────┘
+```
+
+VCC carries the battery voltage on battery and the USB voltage on USB, so the screen shows a
+percentage on battery and "USB" when plugged in. The divider draws about 20 µA. On the
+FireBeetle, GND, AREF, 3V3 and VCC are the last four pins of one header row, so R1 and R2 can
+run in series from VCC to GND with a wire from their join to A0/IO36 at the far end of the other
+row. Sleeve the legs so they don't touch AREF or 3V3. A 100 nF capacitor across R2 steadies the
+reading but isn't required.
+
+Without the resistors the firmware sees nothing on A0 and leaves the battery off the screen. If
+the gauge disagrees with a meter, change `BATT_RATIO` in `src/main.cpp`.
 
 ## LED
 

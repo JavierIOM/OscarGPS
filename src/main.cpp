@@ -2,8 +2,9 @@
 // relayed as NMEA over Bluetooth Classic SPP and USB serial.
 // OscarWatch reads it as a "Serial (COM port)" GPS: pair the board in Windows
 // and pick the outgoing Bluetooth COM port it creates.
-// Optional 128x64 I2C OLED (SSD1306 or SH1106) on the same bus shows UTC, grid,
-// satellites and the Bluetooth link.
+// Optional 128x64 I2C OLED (SSD1306 or SH1106) on the same bus cycles through
+// UTC/grid/link, an ID-52 style sky plot and per-satellite signal bars.
+// Optional battery gauge: VCC pin to A0 through a 100k/100k divider.
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -26,9 +27,40 @@
 #define LED_PIN         LED_BUILTIN
 #define OLED_CONTRAST   96     // of 255; dimmer is kinder to an always-on OLED
 #define OLED_REDRAW_MS  1000   // fallback redraw when no RMC arrives to trigger one
+#define PAGE_MAIN_MS    10000  // time on the UTC/grid page before the satellite pages
+#define PAGE_SAT_MS     5000   // time on each satellite page
+#define MAX_SATS        32
+#define SAT_EXPIRE_MS   4000   // drop a satellite not reported in this long
+#define BATT_PIN        36     // A0, fed from VCC through the divider
+#define BATT_RATIO      2.0f   // 100k/100k; tweak to agree with a meter
+#define BATT_USB_V      4.45f  // VCC above this is the USB rail, not the battery
+#define BATT_READ_MS    2000
 
 BluetoothSerial SerialBT;
 static U8G2 *oled = nullptr;
+
+// Satellites in view, from GSV. sys is the talker's second letter: P GPS, L GLONASS,
+// A Galileo, B BeiDou.
+struct Sat {
+  char sys;
+  uint8_t prn;
+  int8_t elev;      // degrees, -1 unknown
+  int16_t az;       // degrees, -1 unknown
+  uint8_t snr;      // dB-Hz, 0 not tracked
+  uint32_t seenMs;  // 0 marks an empty slot
+};
+static Sat sats[MAX_SATS];
+
+// PRNs used in the fix, from the last GSA of each system
+struct UsedList {
+  char sys;
+  uint8_t prn[12];
+  uint8_t n;
+  uint32_t ms;
+};
+static UsedList used[4] = {{'P'}, {'L'}, {'A'}, {'B'}};
+static char hdopText[6] = "";
+static float battVolts = 0;  // smoothed VCC; 0 means no divider fitted
 
 // NMEA line assembly. Room for 82 chars plus the CRLF we put back on.
 static char line[128];
@@ -123,6 +155,7 @@ static void parseGga(const char *s) {
   uint8_t q = (uint8_t)atoi(f);
   nmeaField(s, 7, f, sizeof(f));
   satellites = (uint8_t)atoi(f);
+  nmeaField(s, 8, hdopText, sizeof(hdopText));
   lastGgaMs = millis();
   if (q > 0) {
     char lat[16], lon[16], ns[2], ew[2];
@@ -138,6 +171,85 @@ static void parseGga(const char *s) {
   fixQuality = q;
 }
 
+static int nmeaFieldCount(const char *s) {
+  int n = 1;
+  for (; *s && *s != '*'; s++) {
+    if (*s == ',') n++;
+  }
+  return n;
+}
+
+static Sat *satSlot(char sys, uint8_t prn) {
+  Sat *oldest = &sats[0];
+  for (Sat &st : sats) {
+    if (st.seenMs && st.sys == sys && st.prn == prn) return &st;
+  }
+  for (Sat &st : sats) {
+    if (!st.seenMs) return &st;
+    if (st.seenMs < oldest->seenMs) oldest = &st;
+  }
+  return oldest;
+}
+
+// Groups of PRN, elevation, azimuth, SNR after 4 header fields. An NMEA 4.1 signal ID
+// at the end is a lone field, which the whole-group count leaves out.
+static void parseGsv(const char *s, char sys) {
+  char f[8];
+  int groups = (nmeaFieldCount(s) - 4) / 4;
+  for (int g = 0; g < groups && g < 4; g++) {
+    int base = 4 + g * 4;
+    nmeaField(s, base, f, sizeof(f));
+    uint8_t prn = (uint8_t)atoi(f);
+    if (!prn) continue;
+    Sat *st = satSlot(sys, prn);
+    st->sys = sys;
+    st->prn = prn;
+    nmeaField(s, base + 1, f, sizeof(f));
+    st->elev = *f ? (int8_t)atoi(f) : -1;
+    nmeaField(s, base + 2, f, sizeof(f));
+    st->az = *f ? (int16_t)atoi(f) : -1;
+    nmeaField(s, base + 3, f, sizeof(f));
+    st->snr = (uint8_t)atoi(f);
+    st->seenMs = millis();
+  }
+}
+
+static UsedList *usedFor(char sys) {
+  for (UsedList &u : used) {
+    if (u.sys == sys) return &u;
+  }
+  return nullptr;
+}
+
+static void parseGsa(const char *s, char sys) {
+  char f[8];
+  if (sys == 'N') {  // combined $GNGSA: NMEA 4.1 puts the system in field 18
+    nmeaField(s, 18, f, sizeof(f));
+    sys = *f == '2' ? 'L' : *f == '3' ? 'A' : *f == '4' ? 'B' : 'P';
+  }
+  UsedList *u = usedFor(sys);
+  if (!u) return;
+  u->n = 0;
+  for (int i = 3; i <= 14; i++) {
+    nmeaField(s, i, f, sizeof(f));
+    if (*f && u->n < 12) u->prn[u->n++] = (uint8_t)atoi(f);
+  }
+  u->ms = millis();
+}
+
+static bool satFresh(const Sat &st) {
+  return st.seenMs && millis() - st.seenMs < SAT_EXPIRE_MS;
+}
+
+static bool satUsed(const Sat &st) {
+  const UsedList *u = usedFor(st.sys);
+  if (!u || millis() - u->ms > SAT_EXPIRE_MS) return false;
+  for (uint8_t i = 0; i < u->n; i++) {
+    if (u->prn[i] == st.prn) return true;
+  }
+  return false;
+}
+
 static void handleLine() {
   line[lineLen] = '\0';
   if (!checksumOk(line, lineLen)) return;
@@ -149,6 +261,8 @@ static void handleLine() {
   }
 
   if (lineLen > 7 && memcmp(line + 3, "GGA,", 4) == 0) parseGga(line);
+  if (lineLen > 7 && memcmp(line + 3, "GSV,", 4) == 0) parseGsv(line, line[2]);
+  if (lineLen > 7 && memcmp(line + 3, "GSA,", 4) == 0) parseGsa(line, line[2]);
   if (lineLen > 7 && memcmp(line + 3, "RMC,", 4) == 0) redrawDue = true;  // last of the burst
 
   line[lineLen] = '\r';
@@ -211,8 +325,8 @@ static bool probeGps() {
   gpsPresent = (Wire.endTransmission() == 0);
   if (gpsPresent) {
     status("PA1010D found at 0x%02X", GPS_I2C_ADDR);
-    // RMC, GGA and GSA every fix, GSV every fifth: position, altitude, time, DOP and sky view
-    sendPmtk("PMTK314,0,1,0,1,1,5,0,0,0,0,0,0,0,0,0,0,0,0,0");
+    // RMC, GGA, GSA and GSV every fix: position, altitude, time, DOP and a live sky view
+    sendPmtk("PMTK314,0,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0");
     sendPmtk("PMTK220,1000");
   }
   return gpsPresent;
@@ -257,9 +371,228 @@ static void drawCentred(const char *s, int y, int dx) {
   oled->drawStr((128 - oled->getStrWidth(s)) / 2 - 1 + dx, y, s);
 }
 
-// UTC, grid and a status line. Everything drifts by up to 2 px a minute against burn-in.
+// Resting LiPo voltage to charge; rough, but plenty for a gauge.
+static int battPercent(float v) {
+  static const float curve[][2] = {
+    {4.20f, 100}, {4.10f, 90}, {4.00f, 80}, {3.92f, 70}, {3.86f, 60}, {3.82f, 50},
+    {3.79f, 40},  {3.76f, 30}, {3.73f, 20}, {3.68f, 10}, {3.50f, 0},
+  };
+  const int n = sizeof(curve) / sizeof(curve[0]);
+  if (v >= curve[0][0]) return 100;
+  for (int i = 1; i < n; i++) {
+    if (v >= curve[i][0]) {
+      float t = (v - curve[i][0]) / (curve[i - 1][0] - curve[i][0]);
+      return (int)(curve[i][1] + t * (curve[i - 1][1] - curve[i][1]) + 0.5f);
+    }
+  }
+  return 0;
+}
+
+static void readBattery() {
+  uint32_t mv = 0;
+  for (int i = 0; i < 16; i++) mv += analogReadMilliVolts(BATT_PIN);
+  float v = mv / 16.0f / 1000.0f * BATT_RATIO;
+  if (v < 1.0f) {  // an unconnected A0 sits near 0 V: no divider fitted
+    battVolts = 0;
+    return;
+  }
+  battVolts = (battVolts > 0 && fabsf(v - battVolts) < 0.3f) ? battVolts * 0.8f + v * 0.2f : v;
+}
+
+// Battery icon with the percentage under it, or "USB" when VCC is the USB rail.
+static void drawBattery(int cx, int top) {
+  oled->setFont(u8g2_font_4x6_tr);
+  if (battVolts > BATT_USB_V) {
+    oled->setFont(u8g2_font_5x7_tr);
+    oled->drawStr(cx - oled->getStrWidth("USB") / 2, top + 10, "USB");
+    return;
+  }
+  int pct = battPercent(battVolts);
+  oled->drawFrame(cx - 7, top, 13, 7);
+  oled->drawBox(cx + 6, top + 2, 2, 3);
+  oled->drawBox(cx - 5, top + 2, (9 * pct + 50) / 100, 3);
+  char t[6];
+  if (pct <= 10) {
+    strcpy(t, "LOW");
+  } else {
+    snprintf(t, sizeof(t), "%d%%", pct);
+  }
+  oled->drawStr(cx - oled->getStrWidth(t) / 2, top + 14, t);
+}
+
+// UTC, grid, satellites in use and the link.
+static void drawMainPage(int dx, int dy) {
+  // Time plus a small "UTC" tag on the same baseline, centred as a pair
+  const char *t = *utcText ? utcText : "--:--:--";
+  oled->setFont(u8g2_font_6x10_tr);
+  int tagW = oled->getStrWidth("UTC");
+  oled->setFont(u8g2_font_logisoso20_tn);
+  int timeW = oled->getStrWidth(t);
+  int x = (128 - (timeW + 3 + tagW)) / 2 - 1 + dx;
+  oled->drawStr(x, 22 + dy, t);
+  oled->setFont(u8g2_font_6x10_tr);
+  oled->drawStr(x + timeW + 3, 22 + dy, "UTC");
+
+  // Grid, shifted left to make room for the battery when a divider is fitted
+  const char *g = fixQuality > 0 && *gridText ? gridText : "no fix";
+  oled->setFont(u8g2_font_helvB14_tr);
+  if (battVolts > 0) {
+    oled->drawStr((100 - oled->getStrWidth(g)) / 2 + dx, 44 + dy, g);
+    drawBattery(113 + dx, 30 + dy);
+  } else {
+    drawCentred(g, 44 + dy, dx);
+  }
+
+  char n[12];
+  snprintf(n, sizeof(n), "%u sats", satellites);
+  oled->setFont(u8g2_font_6x10_tr);
+  oled->drawStr(dx, 61 + dy, n);
+  const char *bt = btConnected ? "Oscar linked" : "not linked";
+  oled->drawStr(126 - oled->getStrWidth(bt) + dx, 61 + dy, bt);
+}
+
+static const char *sysName(char sys) {
+  switch (sys) {
+    case 'P': return "GPS";
+    case 'L': return "GLO";
+    case 'A': return "GAL";
+    case 'B': return "BDS";
+    default:  return "GNS";
+  }
+}
+
+// ID-52 style sky plot: horizon ring, 45 degree ring, north up. Satellites are drawn
+// as their PRN, boxed in reverse when they're in the fix. Counts and DOP on the right.
+static void drawSkyPage(int dx, int dy) {
+  const int cx = 31 + dx, cy = 32 + dy, r = 30;
+  oled->drawCircle(cx, cy, r);
+  oled->drawCircle(cx, cy, r / 2);
+  oled->drawPixel(cx, cy);
+  oled->drawVLine(cx, cy - r, 3);
+  oled->setFont(u8g2_font_4x6_tr);
+  oled->drawStr(cx + 2, cy - r + 6, "N");
+
+  for (const Sat &st : sats) {
+    if (!satFresh(st) || st.elev < 0 || st.az < 0) continue;
+    float rad = r * (90 - st.elev) / 90.0f;
+    float a = st.az * DEG_TO_RAD;
+    int x = cx + (int)lroundf(rad * sinf(a));
+    int y = cy - (int)lroundf(rad * cosf(a));
+    char p[4];
+    snprintf(p, sizeof(p), "%u", st.prn);
+    int w = oled->getStrWidth(p);
+    if (satUsed(st)) {
+      oled->drawBox(x - w / 2 - 1, y - 4, w + 2, 7);
+      oled->setDrawColor(0);
+      oled->drawStr(x - w / 2, y + 2, p);
+      oled->setDrawColor(1);
+    } else {
+      oled->drawStr(x - w / 2, y + 2, p);
+    }
+  }
+
+  // Per-system used/in-view, then fix and HDOP, then battery volts for calibration
+  oled->setFont(u8g2_font_5x7_tr);
+  int y = 9 + dy;
+  const char systems[] = {'P', 'L', 'A', 'B'};
+  for (char sys : systems) {
+    int view = 0, inFix = 0;
+    for (const Sat &st : sats) {
+      if (st.sys != sys || !satFresh(st)) continue;
+      view++;
+      if (satUsed(st)) inFix++;
+    }
+    if (!view) continue;
+    char t[16];
+    snprintf(t, sizeof(t), "%s %d/%d", sysName(sys), inFix, view);
+    oled->drawStr(68 + dx, y, t);
+    y += 9;
+  }
+  char t[16];
+  snprintf(t, sizeof(t), "%s", fixQuality > 0 ? "fix" : "no fix");
+  oled->drawStr(68 + dx, y, t);
+  y += 9;
+  if (*hdopText && fixQuality > 0) {
+    snprintf(t, sizeof(t), "HDOP %s", hdopText);
+    oled->drawStr(68 + dx, y, t);
+    y += 9;
+  }
+  if (battVolts > 0) {
+    snprintf(t, sizeof(t), "%s %.2fV", battVolts > BATT_USB_V ? "USB" : "Bat", battVolts);
+    oled->drawStr(68 + dx, y, t);
+  }
+}
+
+// Signal bars for up to 12 satellites, PRN underneath. Solid bars are in the fix.
+// Satellites in the fix come first, then the strongest; shown in PRN order so bars
+// keep their place from one second to the next.
+static void drawSignalPage(int dx, int dy) {
+  const Sat *pick[12];
+  int n = 0;
+  for (int pass = 0; pass < 2 && n < 12; pass++) {
+    while (n < 12) {
+      const Sat *best = nullptr;
+      for (const Sat &st : sats) {
+        if (!satFresh(st) || satUsed(st) != (pass == 0)) continue;
+        bool taken = false;
+        for (int i = 0; i < n; i++) taken |= (pick[i] == &st);
+        if (!taken && (!best || st.snr > best->snr)) best = &st;
+      }
+      if (!best) break;
+      pick[n++] = best;
+    }
+  }
+  for (int i = 1; i < n; i++) {  // insertion sort by system, then PRN
+    const Sat *k = pick[i];
+    int j = i - 1;
+    while (j >= 0 && (pick[j]->sys > k->sys || (pick[j]->sys == k->sys && pick[j]->prn > k->prn))) {
+      pick[j + 1] = pick[j];
+      j--;
+    }
+    pick[j + 1] = k;
+  }
+
+  oled->setFont(u8g2_font_4x6_tr);
+  if (!n) {
+    drawCentred("no satellites", 34 + dy, dx);
+    return;
+  }
+  const int base = 54 + dy, maxH = 48, pitch = 10;
+  int x0 = (128 - n * pitch) / 2 + 1 + dx;
+  for (int i = 0; i < n; i++) {
+    const Sat *st = pick[i];
+    int h = st->snr * maxH / 50;
+    if (h > maxH) h = maxH;
+    int x = x0 + i * pitch;
+    if (h < 1) {
+      oled->drawHLine(x, base - 1, 8);
+    } else if (satUsed(*st)) {
+      oled->drawBox(x, base - h, 8, h);
+    } else {
+      oled->drawFrame(x, base - h, 8, h);
+    }
+    char p[4];
+    snprintf(p, sizeof(p), "%u", st->prn);
+    oled->drawStr(x + 4 - oled->getStrWidth(p) / 2, base + 8, p);
+  }
+}
+
+// Cycles main, sky, signal. Everything drifts by up to 2 px a minute against burn-in.
 static void drawOled() {
-  uint32_t minute = millis() / 60000;
+  static uint8_t page = 0;
+  static uint32_t pageStartMs = 0;
+  uint32_t now = millis();
+
+  bool anySats = false;
+  for (const Sat &st : sats) anySats |= satFresh(st);
+  if (!anySats) {
+    page = 0;
+  } else if (now - pageStartMs > (page == 0 ? PAGE_MAIN_MS : PAGE_SAT_MS)) {
+    page = (page + 1) % 3;
+    pageStartMs = now;
+  }
+
+  uint32_t minute = now / 60000;
   int dx = minute % 3;
   int dy = (minute / 3) % 2;
 
@@ -267,27 +600,12 @@ static void drawOled() {
   if (!gpsPresent) {
     oled->setFont(u8g2_font_helvB14_tr);
     drawCentred("No GPS", 38 + dy, dx);
+  } else if (page == 1) {
+    drawSkyPage(dx, dy);
+  } else if (page == 2) {
+    drawSignalPage(dx, dy);
   } else {
-    // Time plus a small "UTC" tag on the same baseline, centred as a pair
-    const char *t = *utcText ? utcText : "--:--:--";
-    oled->setFont(u8g2_font_6x10_tr);
-    int tagW = oled->getStrWidth("UTC");
-    oled->setFont(u8g2_font_logisoso20_tn);
-    int timeW = oled->getStrWidth(t);
-    int x = (128 - (timeW + 3 + tagW)) / 2 - 1 + dx;
-    oled->drawStr(x, 22 + dy, t);
-    oled->setFont(u8g2_font_6x10_tr);
-    oled->drawStr(x + timeW + 3, 22 + dy, "UTC");
-
-    oled->setFont(u8g2_font_helvB14_tr);
-    drawCentred(fixQuality > 0 && *gridText ? gridText : "no fix", 44 + dy, dx);
-
-    char sats[12];
-    snprintf(sats, sizeof(sats), "%u sats", satellites);
-    oled->setFont(u8g2_font_6x10_tr);
-    oled->drawStr(dx, 62 + dy - 1, sats);
-    const char *bt = btConnected ? "Oscar linked" : "not linked";
-    oled->drawStr(126 - oled->getStrWidth(bt) + dx, 62 + dy - 1, bt);
+    drawMainPage(dx, dy);
   }
   oled->sendBuffer();
 }
@@ -325,6 +643,14 @@ void setup() {
   }
   if (!probeOled()) status("No OLED at 0x3C or 0x3D, carrying on without one");
 
+  analogSetPinAttenuation(BATT_PIN, ADC_11db);
+  readBattery();
+  if (battVolts > 0) {
+    status("Battery sense on A0: %.2f V%s", battVolts, battVolts > BATT_USB_V ? " (USB)" : "");
+  } else {
+    status("No battery divider on A0");
+  }
+
   if (SerialBT.begin(BT_NAME)) {
     const uint8_t *mac = esp_bt_dev_get_address();
     status("Bluetooth up as %s, %02X:%02X:%02X:%02X:%02X:%02X", BT_NAME,
@@ -337,7 +663,12 @@ void setup() {
 void loop() {
   static uint32_t lastProbeMs = 0;
   static uint32_t lastDrawMs = 0;
+  static uint32_t lastBattMs = 0;
   if (gpsPresent) pollGps();
+  if (millis() - lastBattMs > BATT_READ_MS) {
+    lastBattMs = millis();
+    readBattery();
+  }
   if ((!gpsPresent || !oled) && millis() - lastProbeMs > 5000) {
     lastProbeMs = millis();  // cable plugged in after boot
     if (!gpsPresent) probeGps();

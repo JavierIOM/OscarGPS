@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0] - 2026-10-31
+
+### Added
+- Screen pages in the style of an Icom ID-52's GPS screen: a sky plot (PRN at azimuth and
+  elevation, reversed when in the fix, per-system used/in-view, HDOP) and per-satellite signal
+  bars. Cycle: main 10 s, sky 5 s, signal 5 s, only while satellites are in view.
+- Optional battery gauge from a 100k/100k divider on VCC to A0: percentage and icon on the main
+  page, "USB" when on USB power, volts on the sky page. Leaves the screen alone without one.
+- GSV and GSA parsing.
+
+### Changed
+- GSV now every second instead of every fifth, so the satellite pages are live.
+
 ## [1.1.0] - 2026-10-22
 
 ### Added
