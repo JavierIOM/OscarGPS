@@ -215,6 +215,10 @@ reading but isn't required.
 Without the resistors the firmware sees nothing on A0 and leaves the battery off the screen. If
 the gauge disagrees with a meter, change `BATT_RATIO` in `src/main.cpp`.
 
+## Enclosure
+
+A laser-cut 3 mm acrylic lid, with clips for the screen and GPS and a glue jig to place them: [enclosure/](enclosure/README.md).
+
 ## LED
 
 On the FireBeetle the on-board LED is GPIO2. It stays off when a screen is fitted, to save
