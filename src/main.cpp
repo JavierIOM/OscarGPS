@@ -10,7 +10,10 @@
 #include <Wire.h>
 #include <BluetoothSerial.h>
 #include <esp_bt_device.h>
+#include <esp_gap_bt_api.h>
+#include <esp_spp_api.h>
 #include <esp_system.h>
+#include <Preferences.h>
 #include <U8g2lib.h>
 
 #if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED) || !defined(CONFIG_BT_SPP_ENABLED)
@@ -18,6 +21,12 @@
 #endif
 
 #define BT_NAME         "OscarGPS"
+// 1: once paired, the board dials the PC's Incoming COM port itself and redials after any
+// drop or restart, so the app never has to reconnect. 0: the PC dials the board's Outgoing
+// port, which Windows and OscarWatch don't recover from when the board restarts.
+#define BT_DIAL_HOME    1
+#define DIAL_RETRY_MS   3000   // pause after a failed dial
+#define MAX_HOMES       4      // paired PCs to try in turn
 #define I2C_SDA         21
 #define I2C_SCL         22
 #define GPS_I2C_ADDR    0x10
@@ -64,6 +73,17 @@ struct UsedList {
 static UsedList used[4] = {{'P'}, {'L'}, {'A'}, {'B'}};
 static char hdopText[6] = "";
 static float battVolts = 0;  // smoothed VCC; 0 means no divider fitted
+
+// Paired PCs, from the board's own bond list, and the dialler's state
+static esp_bd_addr_t homes[MAX_HOMES];
+static int homeCount = 0;
+static volatile bool dialling = false;
+static volatile uint32_t dialFailures = 0;
+// What the PC calls its serial service, from SDP. Windows only offers the service while
+// an app has the Incoming port open, so the last name seen is kept in NVS: after a restart
+// the screen can still say which port to open.
+static char pcServiceName[32] = "";
+static Preferences prefs;
 
 // NMEA line assembly. Room for 82 chars plus the CRLF we put back on.
 static char line[128];
@@ -445,7 +465,16 @@ static void drawMainPage(int dx, int dy) {
   snprintf(n, sizeof(n), "%u sats", satellites);
   oled->setFont(u8g2_font_6x10_tr);
   oled->drawStr(dx, 61 + dy, n);
-  const char *bt = btConnected ? "Oscar linked" : "not linked";
+  // Not linked but the PC has told us its port (Windows names the service "COM11" etc):
+  // that's the port to pick in OscarWatch, so say so.
+  char bt[24];
+  if (btConnected) {
+    strcpy(bt, "Oscar linked");
+  } else if (strncmp(pcServiceName, "COM", 3) == 0) {
+    snprintf(bt, sizeof(bt), "use %s", pcServiceName);
+  } else {
+    strcpy(bt, dialling ? "dialling" : "not linked");
+  }
   oled->drawStr(126 - oled->getStrWidth(bt) + dx, 61 + dy, bt);
 }
 
@@ -683,6 +712,65 @@ static void updateLed() {
   digitalWrite(LED_PIN, on ? HIGH : LOW);
 }
 
+// Keeps a link to a paired PC up. connect() does an SDP lookup for the PC's serial port
+// service and then opens RFCOMM, blocking for up to ~10 s when the PC isn't there, so it
+// lives in its own task and the GPS, screen and USB output never wait on it. Paired PCs
+// are tried in turn. Nothing is printed from here: loop() owns the USB serial port.
+static void dialTask(void *) {
+  int next = 0;
+  for (;;) {
+    if (!SerialBT.hasClient()) {
+      dialling = true;
+      bool ok = SerialBT.connect(homes[next % homeCount]);
+      dialling = false;
+      if (!ok) {
+        dialFailures++;
+        next++;
+        vTaskDelay(pdMS_TO_TICKS(DIAL_RETRY_MS));
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
+
+// Runs in the Bluetooth task after the library's own handler. Keeps the name the PC gives
+// its serial port service when the dialler looks it up.
+static void sppEvent(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
+  if (event == ESP_SPP_DISCOVERY_COMP_EVT && param->disc_comp.status == ESP_SPP_SUCCESS &&
+      param->disc_comp.scn_num > 0 && param->disc_comp.service_name[0]) {
+    strlcpy(pcServiceName, param->disc_comp.service_name[0], sizeof(pcServiceName));
+  }
+}
+
+// Starts Bluetooth. In dial-home mode with a paired PC, starts the dialler; with nothing
+// paired yet, offers the serial port service instead so the PC can pair and connect.
+static bool startBluetooth() {
+  prefs.begin("oscargps", false);
+  prefs.getString("pcport", pcServiceName, sizeof(pcServiceName));
+  SerialBT.register_callback(sppEvent);
+  if (!SerialBT.begin(BT_NAME, BT_DIAL_HOME)) return false;
+  const uint8_t *mac = esp_bt_dev_get_address();
+  status("Bluetooth up as %s, %02X:%02X:%02X:%02X:%02X:%02X", BT_NAME,
+         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  if (!BT_DIAL_HOME) return true;
+
+  SerialBT.isReady(true, 5000);
+  int n = MAX_HOMES;
+  if (esp_bt_gap_get_bond_device_list(&n, homes) != ESP_OK) n = 0;
+  homeCount = n;
+  if (homeCount == 0) {
+    esp_spp_start_srv(ESP_SPP_SEC_NONE, ESP_SPP_ROLE_SLAVE, 0, "ESP32SPP");
+    status("Nothing paired yet: pair OscarGPS from the PC, then restart the board");
+    return true;
+  }
+  for (int i = 0; i < homeCount; i++) {
+    status("Dialling paired PC %02X:%02X:%02X:%02X:%02X:%02X", homes[i][0], homes[i][1],
+           homes[i][2], homes[i][3], homes[i][4], homes[i][5]);
+  }
+  xTaskCreatePinnedToCore(dialTask, "dial", 4096, nullptr, 1, nullptr, 1);
+  return true;
+}
+
 void setup() {
   setCpuFrequencyMhz(80);  // lowest clock Bluetooth runs at; saves battery
   pinMode(LED_PIN, OUTPUT);
@@ -736,15 +824,13 @@ void setup() {
   postResult(batt);
 
   postBegin("Bluetooth SPP");
-  bool btOk = SerialBT.begin(BT_NAME);
-  if (btOk) {
-    const uint8_t *mac = esp_bt_dev_get_address();
-    status("Bluetooth up as %s, %02X:%02X:%02X:%02X:%02X:%02X", BT_NAME,
-           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  } else {
-    status("Bluetooth failed to start");
-  }
+  bool btOk = startBluetooth();
+  if (!btOk) status("Bluetooth failed to start");
   postResult(btOk ? "OK" : "FAIL");
+  if (btOk && BT_DIAL_HOME) {
+    postBegin("Paired PC");
+    postResult(homeCount ? "OK" : "NONE");
+  }
 
   // First valid GGA from the GPS proves the whole I2C and NMEA path
   if (gpsPresent && oled) {
@@ -781,6 +867,22 @@ void loop() {
     btConnected = connected;
     redrawDue = true;
     status(connected ? "Bluetooth client connected" : "Bluetooth client disconnected");
+  }
+
+  // Reports a new name and stores it; the first pass reports the one loaded from NVS
+  static char reportedService[32] = "";
+  if (strcmp(reportedService, pcServiceName) != 0) {
+    strlcpy(reportedService, pcServiceName, sizeof(reportedService));
+    status("PC serial service is called \"%s\"", reportedService);
+    if (prefs.getString("pcport", "") != reportedService) prefs.putString("pcport", reportedService);
+  }
+
+  // The first failed dial, then every 20th, so a PC that's off doesn't flood the log
+  static uint32_t reportedFailures = 0;
+  uint32_t failures = dialFailures;
+  if (failures != reportedFailures && (failures == 1 || failures % 20 == 0)) {
+    reportedFailures = failures;
+    status("Dial failed (%u so far): is the PC on, with its Incoming port open?", failures);
   }
 
   if (oled && (redrawDue || millis() - lastDrawMs > OLED_REDRAW_MS + 500)) {

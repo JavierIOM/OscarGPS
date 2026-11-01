@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.4.0] - 2026-11-01
+
+### Changed
+- **The board now dials the PC** (`BT_DIAL_HOME`, on by default). Once paired, it connects to
+  the PC's Incoming Bluetooth COM port, and redials after a restart, power loss or dropout,
+  so the app holds one port open and never has to reconnect. Tested by restarting the board
+  under an open COM11: data was back in 10 seconds with no action on the PC. The paired PCs
+  come from the board's own bond list, so nothing is configured or hard-coded. A board with
+  nothing paired offers its serial port the old way so it can be paired.
+- Dialling runs in its own task, so the GPS, screen and USB output keep going while a dial to
+  an absent PC times out.
+
+### Added
+- The screen names the COM port to use: "use COM11" when not linked, taken from the name
+  Windows gives its serial service in SDP, so it follows Windows if the number changes.
+  Windows only offers the service while an app has the Incoming port open, so the last name
+  is kept in NVS and shown after a restart too. "dialling" before any name is known.
+- "Paired PC" line in the boot check.
+
+### Fixed
+- The repeated "not linked" after every board restart. Each time, OscarWatch was retrying the
+  dead Outgoing port about 30 times a second, and Windows' RFCOMM driver ended up failed (code
+  10). The two looked linked; that's not proven.
+
 ## [1.3.1] - 2026-11-01
 
 ### Changed

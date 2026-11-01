@@ -77,19 +77,36 @@ $GNGGA,...
 
 ## Pairing
 
+Once paired, **the board dials the PC**, not the other way round. It connects to the PC's
+**Incoming** Bluetooth COM port, and redials by itself after a restart, a flat battery or a
+trip out of range. The app just keeps the Incoming port open and never has to reconnect.
+
+That's deliberate. With the usual arrangement (the app opens an Outgoing port to the device),
+neither Windows nor OscarWatch recovers when the device restarts. OscarWatch retries the dead
+port about 30 times a second, and that can knock Windows' Bluetooth serial driver over
+altogether.
+
 ### Windows
 
 1. Settings, Devices, Bluetooth & other devices, Add Bluetooth or other device, Bluetooth.
 2. Pick `OscarGPS`. It may show as its address for a few seconds before the name appears. There
    is no PIN.
-3. Go to More Bluetooth options and open the COM Ports tab. Windows adds two ports. Use the
-   **Outgoing** one, named `OscarGPS 'ESP32SPP'`. The Incoming one never carries any data.
+3. Go to More Bluetooth options and open the COM Ports tab. If there's no **Incoming** port, click
+   Add, choose Incoming, OK.
+4. Restart the board. It finds the PC in its list of paired devices and dials it within a few
+   seconds.
 
-The baud rate setting on a Bluetooth COM port is ignored, so any value works.
+The screen shows which port to use: when it isn't linked yet it reads `use COM11` (or whatever
+number Windows gave the Incoming port), learned from the PC itself, so it follows Windows if
+the number ever changes. The baud rate setting on a Bluetooth COM port is ignored.
+
+A board that has never been paired offers its serial port the old way until it is, so step 2
+works on a fresh board. To go back to the PC dialling the board, set `BT_DIAL_HOME` to 0 in
+`src/main.cpp`.
 
 ### Linux
 
-Not tested by me, but the standard route is:
+Not tested by me. The simplest route is `BT_DIAL_HOME` 0 and the standard binding:
 
 ```
 bluetoothctl pair <address>
@@ -105,7 +122,8 @@ Settings, GPS:
 
 - Enable GPS
 - Connection: Serial (COM port)
-- Serial port: the Outgoing Bluetooth port (or the USB port for a wired setup at 115200)
+- Serial port: the **Incoming** Bluetooth port, the one the screen names (or the USB port for a
+  wired setup at 115200)
 - Tick "Automatically update station position from GPS fix", or press Apply fix to station
 
 ## What it sends
@@ -219,14 +237,14 @@ Keep NTP for that.
 
 - **"Access is denied" opening the port:** another program already has it. Only one program can
   open a COM port at a time.
-- **Port opens but no data:** you picked the Incoming Bluetooth port. Use the Outgoing one.
-- **"The system cannot find the file specified" opening the Bluetooth port**, while Device
-  Manager says the port is fine: Windows' Bluetooth serial layer has wedged. The board isn't at
-  fault (the screen will show "not linked"). Turn Bluetooth off and on in Windows and reopen
-  the port.
-- **Data stopped after the board rebooted or lost power:** the PC opens the Bluetooth link, so
-  the board can't restart it. OscarWatch doesn't reopen the port by itself, so turn GPS off and
-  on in its settings.
+- **Port opens but no data:** you picked the Outgoing Bluetooth port. Use the Incoming one, the
+  port the screen names.
+- **"The system cannot find the file specified" opening a Bluetooth port:** Windows' Bluetooth
+  serial driver has failed. Device Manager shows "Bluetooth Device (RFCOMM Protocol TDI)" with
+  an error (code 10). Close every program that has a Bluetooth COM port open, then turn
+  Bluetooth off and on. With the program still holding the port, the driver may not come back.
+- **Screen says "dialling" for ages:** the PC is off, out of range, or has no Incoming port.
+  The USB log says so too (`Dial failed ... is the PC on, with its Incoming port open?`).
 - **Not in the Bluetooth device list:** check that the LED is doing something. Bluetooth only
   starts after the firmware boots.
 - **No fix indoors:** the PA1010D's patch antenna needs a view of the sky. Try a windowsill. From
