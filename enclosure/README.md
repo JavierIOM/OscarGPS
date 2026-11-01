@@ -1,3 +1,47 @@
+# Enclosure
+
+A layered plywood box with an acrylic lid. Both copy the printed case that fitted: the same
+outline, screw positions, battery bay, board position and USB opening.
+
+| File | Cut from | What |
+|------|----------|------|
+| `oscargps-box-ply.svg` | 3.6 mm ply | Eight box layers, 331 x 167 mm sheet |
+| `oscargps-lid-acrylic.svg` | 3 mm acrylic | The lid and 12 support clips |
+| `oscargps-glue-jig.svg` | 3 mm card, MDF or ply, **not acrylic** | Places the lid clips |
+| `box.scad`, `make_box.py` | | The box, and its export to a clean SVG |
+| `make_lid.py` | | Writes the lid and jig SVGs |
+
+The built box is 78.4 x 80.4 x 31.8 mm with the lid (28.8 mm of ply).
+
+## Plywood box
+
+Eight layers, bottom to top. Keep every piece face up as it comes off the laser: the USB gap
+is on the same edge of L2, L3 and L4.
+
+| Layer | What it is |
+|-------|-----------|
+| L1 | Solid floor |
+| L2 | Battery bay (34.5 x 65.5), and an opening under the FireBeetle with a 3 mm pad at each corner for it to sit on. USB gap |
+| L3 | Battery bay and board bay, with a channel between them for the battery lead. USB gap |
+| L4 | Ring, USB gap |
+| L5 | Ring |
+| L6 | Ring with corner blocks and bolt holes, and the small back-wall slot copied from the print |
+| L7 | Ring with corner blocks and hex pockets for M3 nuts |
+| L8 | Ring with corner blocks and bolt holes; the lid sits on this |
+
+1. **Glue L1 to L6** with wood glue, stacked into a square or against two fences so the edges
+   line up. Weight it or clamp it, and wipe the squeeze-out from the inside.
+2. **Drop four M3 nuts into L7's hex pockets**, glue L7 on, then L8. The nuts are trapped
+   between L6 and L8.
+3. **Sand the outside** flush, then oil or wax it if you like.
+4. **Fit it out.** Battery into its bay. FireBeetle on the corner pads, USB towards the gap.
+   Then the lid, with four **M3 x 12 button heads** into the trapped nuts.
+
+`box.scad` also renders the stack with the lid and dummy boards (`part = "assembly"` or
+`"cutaway"`). A collision check of the ply against the dummy parts and the lid clips came
+back empty. The tightest gap is a jumper housing on the FireBeetle's header, about 0.9 mm under
+the screen. That matches the printed box.
+
 # Acrylic lid
 
 A laser-cut lid in 3 mm acrylic, replacing the 3D printed one. The screen and GPS sit in

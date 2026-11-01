@@ -217,7 +217,7 @@ the gauge disagrees with a meter, change `BATT_RATIO` in `src/main.cpp`.
 
 ## Enclosure
 
-A laser-cut 3 mm acrylic lid, with clips for the screen and GPS and a glue jig to place them: [enclosure/](enclosure/README.md).
+A layered 3.6 mm plywood box and a laser-cut 3 mm acrylic lid, with clips for the screen and GPS and a glue jig to place them: [enclosure/](enclosure/README.md).
 
 ## LED
 
