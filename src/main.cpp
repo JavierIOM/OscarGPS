@@ -731,7 +731,7 @@ void setup() {
   if (battVolts > 0) {
     status("Battery sense on A0: %.2f V%s", battVolts, battVolts > BATT_USB_V ? " (USB)" : "");
   } else {
-    status("No battery divider on A0");
+    status("No battery divider on A0 (reads %u mV; a fitted divider reads 1700 to 2400)", analogReadMilliVolts(BATT_PIN));
   }
   postResult(batt);
 

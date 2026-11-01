@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.1] - 2026-11-01
+
+### Changed
+- When no battery divider is found, the boot log gives the raw A0 reading, so a wiring fault
+  (0 V: VCC leg or A0 wire not connected) can be told apart from a missing divider.
+
 ## [1.3.0] - 2026-10-31
 
 ### Added
