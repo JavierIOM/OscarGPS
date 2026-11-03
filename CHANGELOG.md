@@ -1,6 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [1.4.1] - 2026-11-03
+
+### Changed
+- Screen drawn rotated 180 degrees (`OLED_ROTATION`, `U8G2_R2`), the right way up in the
+  enclosure. Set `U8G2_R0` if your screen reads upside down.
+- Enclosure: plywood box, acrylic lid, clips and glue jig (details below, previously unreleased).
+
+## [Unreleased, folded into 1.4.1]
 
 ### Added
 - `enclosure/`: laser-cut 3 mm acrylic lid (window on its own layer for opaque acrylic), 12

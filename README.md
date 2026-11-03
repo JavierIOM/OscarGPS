@@ -48,7 +48,7 @@ nothing installed: Connect, set the address, pick the file, Program. Or with
 [esptool](https://github.com/espressif/esptool):
 
 ```
-esptool.py --chip esp32 write_flash 0x0 OscarGPS-1.4.0-esp32-full.bin
+esptool.py --chip esp32 write_flash 0x0 OscarGPS-1.4.1-esp32-full.bin
 ```
 
 ## Build and flash
@@ -155,6 +155,9 @@ Wire its VCC, GND, SDA and SCL to the same four lines as the GPS. It sits at 0x3
 and the GPS at 0x10, so they share the bus. Use one screen: two modules on the same address
 will fight. The controller type is detected at boot. Without a screen everything else works
 as normal, and a screen plugged in later is picked up within 5 seconds.
+
+The screen is drawn rotated 180 degrees to suit the enclosure. If yours reads upside down, set
+`OLED_ROTATION` to `U8G2_R0` in `src/main.cpp`.
 
 "Oscar linked" means a Bluetooth client has the serial port open ("not linked" otherwise). The
 board can't tell which program that is. To slow burn-in, the contrast is turned down and the

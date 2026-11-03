@@ -36,6 +36,7 @@
 #define FIX_TIMEOUT_MS  5000   // no GGA for this long counts as no fix
 #define LED_PIN         LED_BUILTIN
 #define OLED_CONTRAST   96     // of 255; dimmer is kinder to an always-on OLED
+#define OLED_ROTATION   U8G2_R2 // R2 = 180 degrees, right way up in the enclosure; U8G2_R0 if yours reads upside down
 #define OLED_REDRAW_MS  1000   // fallback redraw when no RMC arrives to trigger one
 #define PAGE_MAIN_MS    10000  // time on the UTC/grid page before the satellite pages
 #define PAGE_SAT_MS     5000   // time on each satellite page
@@ -369,9 +370,9 @@ static bool probeOled() {
     uint8_t st = Wire.available() ? Wire.read() : 0xFF;
     bool sh1106 = ((st & 0x0F) == 0x08 || (st & 0x0F) == 0x00);
     if (sh1106) {
-      oled = new U8G2_SH1106_128X64_NONAME_F_HW_I2C(U8G2_R0, U8X8_PIN_NONE);
+      oled = new U8G2_SH1106_128X64_NONAME_F_HW_I2C(OLED_ROTATION, U8X8_PIN_NONE);
     } else {
-      oled = new U8G2_SSD1306_128X64_NONAME_F_HW_I2C(U8G2_R0, U8X8_PIN_NONE);
+      oled = new U8G2_SSD1306_128X64_NONAME_F_HW_I2C(OLED_ROTATION, U8X8_PIN_NONE);
     }
     oled->setI2CAddress(addr << 1);
     oled->setBusClock(100000);  // the GPS shares the bus; a redraw is ~95 ms, done between bursts
