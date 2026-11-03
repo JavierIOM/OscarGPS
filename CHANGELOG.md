@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- README troubleshooting: removing and re-pairing the board in Windows deletes the Incoming
+  port, which has to be added again. Docs only, no version bump.
+
 ## [1.4.1] - 2026-11-03
 
 ### Changed

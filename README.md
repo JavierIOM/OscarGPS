@@ -250,6 +250,12 @@ Keep NTP for that.
   serial driver has failed. Device Manager shows "Bluetooth Device (RFCOMM Protocol TDI)" with
   an error (code 10). Close every program that has a Bluetooth COM port open, then turn
   Bluetooth off and on. With the program still holding the port, the driver may not come back.
+- **Stopped working after removing and re-pairing `OscarGPS`:** removing the device in Windows
+  deletes the Incoming port as well, and pairing again doesn't bring it back. The old COM
+  numbers may still be listed but won't open. Add an Incoming port again (Pairing, step 3) and
+  point the app at it. Until the first link the screen shows the old number, so go by the COM
+  Ports tab this time. You rarely need to re-pair: if the link drops, check the app has the
+  Incoming port open first.
 - **Screen says "dialling" for ages:** the PC is off, out of range, or has no Incoming port.
   The USB log says so too (`Dial failed ... is the PC on, with its Incoming port open?`).
 - **Not in the Bluetooth device list:** check that the LED is doing something. Bluetooth only
