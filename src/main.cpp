@@ -5,6 +5,7 @@
 // Optional 128x64 I2C OLED (SSD1306 or SH1106) on the same bus cycles through
 // UTC/grid/link, an ID-52 style sky plot and per-satellite signal bars.
 // Optional battery gauge: VCC pin to A0 through a 100k/100k divider.
+// On USB power it also runs a Wi-Fi access point with a status page at 192.168.4.1.
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -15,6 +16,10 @@
 #include <esp_system.h>
 #include <Preferences.h>
 #include <U8g2lib.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <DNSServer.h>
+#include "web_page.h"
 
 #if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED) || !defined(CONFIG_BT_SPP_ENABLED)
 #error Bluetooth Classic SPP is not enabled in this core
@@ -47,6 +52,11 @@
 #define BATT_RATIO      2.0f   // 100k/100k; tweak to agree with a meter
 #define BATT_USB_V      4.45f  // VCC above this is the USB rail, not the battery
 #define BATT_READ_MS    2000
+// Wi-Fi access point and status page. 0: never. 1: only on USB power, so the battery isn't
+// spent on it (needs the divider to tell; without one it behaves like 2). 2: always.
+#define WIFI_AP_MODE    1
+#define WIFI_SETTLE_MS  5000   // the power source must hold this long before Wi-Fi follows it
+#define PAGE_WIFI_MS    5000   // time on the screen's Wi-Fi page
 
 BluetoothSerial SerialBT;
 static U8G2 *oled = nullptr;
@@ -108,6 +118,20 @@ static uint8_t satellites = 0;
 static uint32_t lastGgaMs = 0;
 static char utcText[9] = "";      // HH:MM:SS from the last GGA
 static char gridText[7] = "";     // 6-character Maidenhead locator
+static bool havePos = false;
+static double latDeg = 0, lonDeg = 0;
+static float altM = 0;            // above mean sea level, from GGA
+static char dateText[11] = "";    // YYYY-MM-DD from the last RMC
+static float speedKn = 0, courseDeg = 0;
+static uint8_t fixMode = 0;       // GSA: 1 none, 2 2D, 3 3D
+static char pdopText[6] = "", vdopText[6] = "";
+static uint32_t nmeaOk = 0, nmeaBad = 0;  // sentences that passed and failed the checksum
+
+// Wi-Fi access point (see startWifi)
+static WebServer web(80);
+static DNSServer dns;
+static bool wifiOn = false;
+static char apPass[9] = "";
 static bool redrawDue = false;    // set at the end of each NMEA burst (RMC)
 
 // Status lines go to USB only and start with '#', so NMEA parsers skip them.
@@ -197,12 +221,30 @@ static void parseGga(const char *s) {
     nmeaField(s, 3, ns, sizeof(ns));
     nmeaField(s, 4, lon, sizeof(lon));
     nmeaField(s, 5, ew, sizeof(ew));
-    if (*lat && *lon) maidenhead(nmeaDegrees(lat, ns), nmeaDegrees(lon, ew), gridText);
+    if (*lat && *lon) {
+      latDeg = nmeaDegrees(lat, ns);
+      lonDeg = nmeaDegrees(lon, ew);
+      havePos = true;
+      maidenhead(latDeg, lonDeg, gridText);
+    }
+    nmeaField(s, 9, f, sizeof(f));
+    altM = atof(f);
   }
   if ((q > 0) != (fixQuality > 0)) {
     status(q > 0 ? "GPS fix, %u satellites" : "GPS fix lost, %u satellites", satellites);
   }
   fixQuality = q;
+}
+
+// Date, speed and course: the rest of RMC is in GGA as well.
+static void parseRmc(const char *s) {
+  char f[16];
+  nmeaField(s, 9, f, sizeof(f));
+  if (strlen(f) == 6) snprintf(dateText, sizeof(dateText), "20%.2s-%.2s-%.2s", f + 4, f + 2, f);
+  nmeaField(s, 7, f, sizeof(f));
+  speedKn = atof(f);
+  nmeaField(s, 8, f, sizeof(f));
+  courseDeg = atof(f);
 }
 
 static int nmeaFieldCount(const char *s) {
@@ -261,6 +303,10 @@ static void parseGsa(const char *s, char sys) {
     nmeaField(s, 18, f, sizeof(f));
     sys = *f == '2' ? 'L' : *f == '3' ? 'A' : *f == '4' ? 'B' : 'P';
   }
+  nmeaField(s, 2, f, sizeof(f));
+  fixMode = (uint8_t)atoi(f);
+  nmeaField(s, 15, pdopText, sizeof(pdopText));
+  nmeaField(s, 17, vdopText, sizeof(vdopText));
   UsedList *u = usedFor(sys);
   if (!u) return;
   u->n = 0;
@@ -286,7 +332,11 @@ static bool satUsed(const Sat &st) {
 
 static void handleLine() {
   line[lineLen] = '\0';
-  if (!checksumOk(line, lineLen)) return;
+  if (!checksumOk(line, lineLen)) {
+    nmeaBad++;
+    return;
+  }
+  nmeaOk++;
 
   // Only talker sentences ($GP, $GN, $GL, $GA...) go out; $PMTK acks are ours.
   if (line[1] != 'G') {
@@ -297,7 +347,10 @@ static void handleLine() {
   if (lineLen > 7 && memcmp(line + 3, "GGA,", 4) == 0) parseGga(line);
   if (lineLen > 7 && memcmp(line + 3, "GSV,", 4) == 0) parseGsv(line, line[2]);
   if (lineLen > 7 && memcmp(line + 3, "GSA,", 4) == 0) parseGsa(line, line[2]);
-  if (lineLen > 7 && memcmp(line + 3, "RMC,", 4) == 0) redrawDue = true;  // last of the burst
+  if (lineLen > 7 && memcmp(line + 3, "RMC,", 4) == 0) {
+    parseRmc(line);
+    redrawDue = true;  // last of the burst
+  }
 
   line[lineLen] = '\r';
   line[lineLen + 1] = '\n';
@@ -631,7 +684,23 @@ static void drawSignalPage(int dx, int dy) {
   }
 }
 
-// Cycles main, sky, signal. Everything drifts by up to 2 px a minute against burn-in.
+// The access point's name, password and address, so a phone can join without the USB log.
+static void drawWifiPage(int dx, int dy) {
+  oled->setFont(u8g2_font_6x10_tr);
+  oled->drawStr(dx, 9 + dy, "Wi-Fi status page");
+  oled->drawHLine(dx, 12 + dy, 126);
+  char t[32];
+  snprintf(t, sizeof(t), "net  %s", BT_NAME);
+  oled->drawStr(dx, 25 + dy, t);
+  snprintf(t, sizeof(t), "pass %s", apPass);
+  oled->drawStr(dx, 37 + dy, t);
+  oled->drawStr(dx, 49 + dy, "http://192.168.4.1");
+  snprintf(t, sizeof(t), "%u connected", WiFi.softAPgetStationNum());
+  oled->drawStr(dx, 61 + dy, t);
+}
+
+// Cycles main, then sky and signal while satellites are in view, then Wi-Fi while the access
+// point is up. Everything drifts by up to 2 px a minute against burn-in.
 static void drawOled() {
   static uint8_t page = 0;
   static uint32_t pageStartMs = 0;
@@ -639,10 +708,12 @@ static void drawOled() {
 
   bool anySats = false;
   for (const Sat &st : sats) anySats |= satFresh(st);
-  if (!anySats) {
-    page = 0;
-  } else if (now - pageStartMs > (page == 0 ? PAGE_MAIN_MS : PAGE_SAT_MS)) {
-    page = (page + 1) % 3;
+  const bool shown[4] = {true, anySats, anySats, wifiOn};
+  if (!shown[page]) page = 0;
+  if (now - pageStartMs > (page == 0 ? PAGE_MAIN_MS : page == 3 ? PAGE_WIFI_MS : PAGE_SAT_MS)) {
+    do {
+      page = (page + 1) % 4;
+    } while (!shown[page]);
     pageStartMs = now;
   }
 
@@ -658,6 +729,8 @@ static void drawOled() {
     drawSkyPage(dx, dy);
   } else if (page == 2) {
     drawSignalPage(dx, dy);
+  } else if (page == 3) {
+    drawWifiPage(dx, dy);
   } else {
     drawMainPage(dx, dy);
   }
@@ -806,6 +879,159 @@ static bool startBluetooth() {
   return true;
 }
 
+// ── Wi-Fi access point and status page ────────────────────────────────────
+// The board's own network, named like the Bluetooth device, with a page at 192.168.4.1
+// showing everything it knows. A catch-all DNS answers every name with the board, so a
+// phone that joins opens the page as a sign-in page. WPA2, because the page shows your
+// exact position; the password is made on first boot and kept in NVS, so no password is in
+// the source or the release images.
+static char json[4096];
+static size_t jlen = 0;
+
+static void jput(const char *fmt, ...) {
+  if (jlen >= sizeof(json) - 1) return;
+  va_list args;
+  va_start(args, fmt);
+  int n = vsnprintf(json + jlen, sizeof(json) - jlen, fmt, args);
+  va_end(args);
+  if (n > 0) jlen = jlen + n < sizeof(json) ? jlen + n : sizeof(json) - 1;
+}
+
+// A JSON string. The port name comes from the PC, so quotes and control characters can't be
+// trusted to be absent.
+static void jstr(const char *s) {
+  jput("\"");
+  for (; *s; s++) {
+    if (*s == '"' || *s == '\\') {
+      jput("\\%c", *s);
+    } else if ((uint8_t)*s >= 0x20) {
+      jput("%c", *s);
+    }
+  }
+  jput("\"");
+}
+
+// Everything the status page shows. Satellites are [system, PRN, elevation, azimuth, SNR,
+// in fix], with -1 for an unknown elevation or azimuth.
+static void buildJson() {
+  uint32_t now = millis();
+  jlen = 0;
+  jput("{\"fw\":\"%s\",\"up\":%lu,\"utc\":\"%s\",\"date\":\"%s\",\"fix\":%u,\"mode\":%u,",
+       FW_VERSION, (unsigned long)(now / 1000), utcText, dateText, fixQuality, fixMode);
+  if (havePos && fixQuality > 0) {
+    jput("\"lat\":%.7f,\"lon\":%.7f,\"alt\":%.1f,\"spd\":%.2f,\"crs\":%.1f,", latDeg, lonDeg,
+         altM, speedKn, courseDeg);
+  } else {
+    jput("\"lat\":null,\"lon\":null,");
+  }
+  jput("\"hdop\":\"%s\",\"pdop\":\"%s\",\"vdop\":\"%s\",\"used\":%u,", hdopText, pdopText,
+       vdopText, satellites);
+  if (lastGgaMs) {
+    jput("\"age\":%.1f,", (now - lastGgaMs) / 1000.0f);
+  } else {
+    jput("\"age\":null,");
+  }
+  jput("\"sats\":[");
+  bool first = true;
+  for (const Sat &st : sats) {
+    if (!satFresh(st)) continue;
+    jput("%s[\"%c\",%u,%d,%d,%u,%d]", first ? "" : ",", st.sys, st.prn, st.elev, st.az, st.snr,
+         satUsed(st) ? 1 : 0);
+    first = false;
+  }
+  char label[24];
+  linkLabel(label, sizeof(label));
+  jput("],\"bt\":{\"label\":");
+  jstr(label);
+  jput(",\"port\":");
+  jstr(pcServiceName);
+  jput(",\"res\":\"%s\",\"sdp\":%u,\"fails\":%u,\"paired\":%d},",
+       dialResult == DIAL_NO_PORT ? "port closed" : dialResult == DIAL_NO_PC ? "PC didn't answer" : "",
+       sdpMs, dialFailures, homeCount);
+  jput("\"pwr\":{\"v\":%.2f,\"usb\":%s,\"pct\":", battVolts, battVolts > BATT_USB_V ? "true" : "false");
+  if (battVolts > 0 && battVolts <= BATT_USB_V) {
+    jput("%d},", battPercent(battVolts));
+  } else {
+    jput("null},");
+  }
+  jput("\"sys\":{\"heap\":%u,\"minheap\":%u,\"clients\":%u,\"ok\":%u,\"bad\":%u}}",
+       ESP.getFreeHeap(), ESP.getMinFreeHeap(), wifiOn ? WiFi.softAPgetStationNum() : 0,
+       nmeaOk, nmeaBad);
+}
+
+static void handleRoot() {
+  web.sendHeader("Cache-Control", "no-cache");
+  web.send_P(200, "text/html", PAGE_HTML);
+}
+
+static void handleApi() {
+  buildJson();
+  web.sendHeader("Cache-Control", "no-store");
+  web.send(200, "application/json", json);
+}
+
+// Phones probe a known URL to see if a network has internet. Sending every other request to
+// the page makes them offer it as the network's sign-in page.
+static void handleOther() {
+  web.sendHeader("Location", "http://192.168.4.1/", true);
+  web.send(302, "text/plain", "");
+}
+
+// Made once, from the hardware RNG (true random while the radio is on), and kept in NVS.
+// No l, o, 0 or 1, which are easy to misread on the screen.
+static void makeApPass() {
+  prefs.getString("appass", apPass, sizeof(apPass));
+  if (strlen(apPass) == 8) return;
+  const char *set = "abcdefghijkmnpqrstuvwxyz23456789";
+  for (int i = 0; i < 8; i++) apPass[i] = set[esp_random() % 32];
+  apPass[8] = '\0';
+  prefs.putString("appass", apPass);
+}
+
+static bool startWifi() {
+  WiFi.mode(WIFI_AP);
+  if (!WiFi.softAP(BT_NAME, apPass)) {
+    status("Wi-Fi access point failed to start");
+    WiFi.mode(WIFI_OFF);
+    return false;
+  }
+  dns.start(53, "*", WiFi.softAPIP());
+  web.begin();
+  wifiOn = true;
+  redrawDue = true;
+  status("Wi-Fi on: network %s, password %s, http://%s, free heap %u", BT_NAME, apPass,
+         WiFi.softAPIP().toString().c_str(), ESP.getFreeHeap());
+  return true;
+}
+
+static void stopWifi() {
+  web.stop();
+  dns.stop();
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_OFF);
+  wifiOn = false;
+  redrawDue = true;
+  status("Wi-Fi off, free heap %u", ESP.getFreeHeap());
+}
+
+// Follows the power source once it has held for WIFI_SETTLE_MS, so a wobble at the USB
+// threshold can't flap the radio.
+static void updateWifi() {
+  bool want = WIFI_AP_MODE == 2 || (WIFI_AP_MODE == 1 && (battVolts == 0 || battVolts > BATT_USB_V));
+  static bool lastWant = false;
+  static uint32_t sinceMs = 0;
+  if (want != lastWant) {
+    lastWant = want;
+    sinceMs = millis();
+  }
+  if (want == wifiOn || millis() - sinceMs < WIFI_SETTLE_MS) return;
+  if (!want) {
+    stopWifi();
+  } else if (!startWifi()) {
+    sinceMs = millis();  // try again after another settle period
+  }
+}
+
 void setup() {
   setCpuFrequencyMhz(80);  // lowest clock Bluetooth runs at; saves battery
   pinMode(LED_PIN, OUTPUT);
@@ -867,6 +1093,18 @@ void setup() {
     postResult(homeCount ? "OK" : "NONE");
   }
 
+  makeApPass();
+  web.on("/", handleRoot);
+  web.on("/api", handleApi);
+  web.onNotFound(handleOther);
+  bool onUsb = battVolts == 0 || battVolts > BATT_USB_V;
+  postBegin("Wi-Fi AP");
+  postResult(WIFI_AP_MODE == 0 ? "OFF" : (WIFI_AP_MODE == 2 || onUsb) ? "ON" : "SLEEP");
+  if (WIFI_AP_MODE) {
+    status("Wi-Fi: network %s, password %s, %s", BT_NAME, apPass,
+           WIFI_AP_MODE == 2 ? "always on" : "on USB power only");
+  }
+
   // First valid GGA from the GPS proves the whole I2C and NMEA path
   if (gpsPresent && oled) {
     postBegin("NMEA stream");
@@ -891,6 +1129,30 @@ void loop() {
     lastBattMs = millis();
     readBattery();
   }
+  updateWifi();
+  if (wifiOn) {
+    dns.processNextRequest();
+    web.handleClient();
+  }
+
+  // "api" on USB prints what the status page gets, for testing without joining the network
+  static char cmd[8];
+  static uint8_t cmdLen = 0;
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      cmd[cmdLen] = '\0';
+      if (strcmp(cmd, "api") == 0) {
+        buildJson();
+        Serial.print("# api ");
+        Serial.println(json);
+      }
+      cmdLen = 0;
+    } else if (cmdLen < sizeof(cmd) - 1) {
+      cmd[cmdLen++] = c;
+    }
+  }
+
   if ((!gpsPresent || !oled) && millis() - lastProbeMs > 5000) {
     lastProbeMs = millis();  // cable plugged in after boot
     if (!gpsPresent) probeGps();

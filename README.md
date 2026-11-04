@@ -193,15 +193,47 @@ WAIT, and so on. It takes about 5 seconds, and is skipped when no screen is fitt
 
 ### Pages
 
-With satellites in view the screen cycles every 20 seconds:
+With satellites in view the screen cycles every 20 seconds (25 with Wi-Fi on):
 
 | Page | Shows | Time on screen |
 |------|-------|----------------|
 | Main | UTC, grid, satellites in use, link, battery | 10 s |
 | Sky plot | Each satellite at its azimuth and elevation, labelled with its PRN. Reversed (white box) means it's in the fix. Outer ring is the horizon, inner ring 45 degrees, north up. Used/in-view per system, HDOP and battery volts on the right | 5 s |
 | Signal | A bar per satellite, height from its SNR (0 to 50 dB-Hz), PRN underneath. Solid bars are in the fix, hollow ones are tracked but unused. Up to 12, those in the fix first | 5 s |
+| Wi-Fi | The access point's name, password and address, and how many devices are on it. Only while the access point is up | 5 s |
 
 The GPS is set to report its satellite list every second so the pages update live.
+
+## Wi-Fi status page
+
+On USB power the board also runs its own Wi-Fi network, `OscarGPS`, with a page showing
+everything it knows: a large sky plot, signal bars, every satellite in view, position to six
+decimal places with altitude, speed and course, the 10-character grid locator, fix type,
+HDOP/PDOP/VDOP, the Bluetooth link and the PC port, battery, uptime, free memory and NMEA
+checksum counts. It updates once a second, in a dark theme with a light one on the button.
+
+1. Plug the board into USB. About 5 seconds later the screen adds a Wi-Fi page with the
+   network name and password.
+2. Join `OscarGPS` from a phone or laptop with that password. Most phones then open the page
+   by themselves, as a network sign-in page. If not, go to `http://192.168.4.1`.
+3. The phone may warn that the network has no internet. Stay connected anyway (on an iPhone:
+   Cancel, then Use Without Internet).
+
+**Only on USB power**, because an access point keeps the radio on all the time and would roughly
+halve the battery life. The board switches Wi-Fi on or off once the power source has held for 5
+seconds, using the battery gauge to tell. Without the divider it can't tell, so it leaves Wi-Fi
+on. `WIFI_AP_MODE` at the top of `src/main.cpp`: 0 never, 1 USB only (the default), 2 always.
+
+**The password** is made from the ESP32's hardware random number generator on first boot and
+kept in the board's NVS, so it's different on every board and isn't in the source or the
+release images. It's WPA2 because the page shows your exact position. The full image wipes
+NVS, so flashing it makes a new password. The USB log prints it at boot too.
+
+Wi-Fi and Bluetooth share the ESP32's radio and take turns, which NMEA's few hundred bytes a
+second doesn't notice. With both running, about 45 to 50 KB of memory is free.
+
+For testing without joining the network, send `api` over USB serial (115200) and the board
+prints the page's data as one JSON line starting `# api `.
 
 ## Battery gauge (optional)
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased] (1.6.0, on test)
+
+### Added
+- Wi-Fi status page on USB power. The board runs its own network, `OscarGPS`, with a page at
+  `http://192.168.4.1` (and a catch-all DNS so phones open it as a sign-in page): sky plot,
+  signal bars, satellite table, position with altitude, speed and course, the 10-character
+  grid, fix type, HDOP/PDOP/VDOP, link and PC port, battery, uptime, free memory and NMEA
+  checksum counts, updated every second. Dark theme with a light toggle.
+- Wi-Fi follows the power source (`WIFI_AP_MODE` 1, the default): on 5 s after USB appears, off
+  5 s after it goes, so the battery isn't spent on it. 0 never, 2 always.
+- WPA2 password made from the hardware RNG on first boot and kept in NVS: different on every
+  board, never in the source or the images. Shown on a new Wi-Fi page on the screen and in
+  the USB log.
+- `api` over USB serial prints the page's JSON, for testing without joining the network.
+- Position, altitude, date, speed, course, fix type and PDOP/VDOP are now kept from RMC, GGA
+  and GSA, and good and bad NMEA checksums are counted.
+
+### Changed
+- Flash use goes from 1.16 to 1.62 MB of the 3 MB app partition. With Wi-Fi and Bluetooth both
+  up, 45 to 50 KB of heap is free (lowest seen 28 KB, during Wi-Fi start).
+
 ## [1.5.0] - 2026-11-04
 
 ### Changed
