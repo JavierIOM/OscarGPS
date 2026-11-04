@@ -23,8 +23,9 @@ block = 8.5;                           // corner blocks in L6 to L8, above the b
 battery = [3.0, 5.25, 37.5, 70.75];    // 34.5 x 65.5 pocket in L2 and L3
 board = [44.0, 7.5, 73.5, 66.0];       // FireBeetle 29 x 58 plus clearance
 pad = 3;                               // corner pads the board rests on (L2)
-usb = [51.3, 66.05];                   // USB opening x range, back wall, L2 to L4
-slot = [17.55, 22.3];                  // small back-wall slot copied from the print, L6
+usb = [48.3, 63.05];                   // USB opening x range, back wall, L3 and L4 (the board sits on L2).
+                                       // 3 mm towards the battery from the print's 51.3 to 66.05, to line up
+                                       // with the socket (Javier, test fit of the cut box)
 lead = [37.5, 50.0, 44.0, 66.0];       // battery lead channel between the two bays, L3
 
 $fn = 48;
@@ -48,11 +49,11 @@ module board_air() difference() {      // under the board, leaving a pad at each
 
 module layer(n) {
     if (n == 1) outline();
-    if (n == 2) difference() { outline(); rect(battery); board_air(); back_gap(usb[0], usb[1], board[3] - 1); }
+    if (n == 2) difference() { outline(); rect(battery); board_air(); }
     if (n == 3) difference() { outline(); rect(battery); rect(board); rect(lead); back_gap(usb[0], usb[1], board[3] - 1); }
     if (n == 4) difference() { outline(); rect(cavity); back_gap(usb[0], usb[1], cavity[3] - 1); }
     if (n == 5) difference() { outline(); rect(cavity); }
-    if (n == 6) difference() { outline(); cavity_less_blocks(); holes(); back_gap(slot[0], slot[1], cavity[3] - 1); }
+    if (n == 6) difference() { outline(); cavity_less_blocks(); holes(); }
     if (n == 7) difference() { outline(); cavity_less_blocks(); hexes(); }
     if (n == 8) difference() { outline(); cavity_less_blocks(); holes(); }
 }
@@ -83,7 +84,7 @@ module dummies() {
     translate([board[0] + 0.25, board[1] + 0.25, 2 * ply]) {
         color("SeaGreen") cube([29, 58, 1.6]);                                                          // FireBeetle
         color("Silver") translate([5.5, 5, 1.6]) cube([18, 25.5, 3.1]);                                  // ESP32 module
-        color("Silver") translate([10.5, 57, 1.6]) cube([8, 6, 3]);                                      // USB, overhanging
+        color("Silver") translate([7.5, 57, 1.6]) cube([8, 6, 3]);                                       // USB, overhanging
         color("Black") for (x = [0.3, 26.2]) translate([x, 6, 1.6]) cube([2.5, 40, 2.5]);                // header strips
         color("Black") translate([26.2, 40, 4.1]) cube([2.5, 12.7, 14]);                                 // jumper housings on 5 pins
     }

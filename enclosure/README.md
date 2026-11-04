@@ -16,16 +16,16 @@ The built box is 78.4 x 80.4 x 31.8 mm with the lid (28.8 mm of ply).
 ## Plywood box
 
 Eight layers, bottom to top. Keep every piece face up as it comes off the laser: the USB gap
-is on the same edge of L2, L3 and L4.
+is on the same edge of L3 and L4.
 
 | Layer | What it is |
 |-------|-----------|
 | L1 | Solid floor |
-| L2 | Battery bay (34.5 x 65.5), and an opening under the FireBeetle with a 3 mm pad at each corner for it to sit on. USB gap |
+| L2 | Battery bay (34.5 x 65.5), and an opening under the FireBeetle with a 3 mm pad at each corner for it to sit on |
 | L3 | Battery bay and board bay, with a channel between them for the battery lead. USB gap |
 | L4 | Ring, USB gap |
 | L5 | Ring |
-| L6 | Ring with corner blocks and bolt holes, and the small back-wall slot copied from the print |
+| L6 | Ring with corner blocks and bolt holes |
 | L7 | Ring with corner blocks and hex pockets for M3 nuts |
 | L8 | Ring with corner blocks and bolt holes; the lid sits on this |
 

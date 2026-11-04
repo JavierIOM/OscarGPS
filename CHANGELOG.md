@@ -6,6 +6,14 @@
 - README troubleshooting: removing and re-pairing the board in Windows deletes the Incoming
   port, which has to be added again. Docs only, no version bump.
 
+### Changed
+- Enclosure, from Javier's test fit of the cut box:
+  - L2 loses its USB cut-out: the FireBeetle rests on L2, so it was all below the board.
+  - The USB opening in L3 and L4 moves 3 mm towards the battery side (x 48.3 to 63.05) to
+    line up with the socket.
+  - L6 loses the small back-wall slot copied from the print. Not needed.
+  No firmware change.
+
 ## [1.4.1] - 2026-11-03
 
 ### Changed
