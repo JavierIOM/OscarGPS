@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] (1.6.0, on test)
+## [1.6.0] - 2026-11-04
 
 ### Added
 - Wi-Fi status page on USB power. The board runs its own network, `OscarGPS`, with a page at
