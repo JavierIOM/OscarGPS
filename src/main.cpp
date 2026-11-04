@@ -27,6 +27,7 @@
 #define BT_DIAL_HOME    1
 #define DIAL_RETRY_MS   3000   // pause after a failed dial
 #define MAX_HOMES       4      // paired PCs to try in turn
+#define PC_ANSWER_MS    3500   // SDP answered faster than this: the PC is there (page timeout is 5.12 s)
 #define I2C_SDA         21
 #define I2C_SCL         22
 #define GPS_I2C_ADDR    0x10
@@ -80,6 +81,15 @@ static esp_bd_addr_t homes[MAX_HOMES];
 static int homeCount = 0;
 static volatile bool dialling = false;
 static volatile uint32_t dialFailures = 0;
+// Why the last dial failed. Bluedroid gives the same failure status whether the PC has no
+// serial port open or isn't there at all, but the time differs: a PC in range answers the SDP
+// lookup in about a second, while one that's off, asleep or out of range takes the 5.12 s page
+// timeout. So the dialler times the lookup.
+enum DialResult : uint8_t { DIAL_NONE, DIAL_NO_PORT, DIAL_NO_PC };
+static volatile DialResult dialResult = DIAL_NONE;
+static volatile uint32_t dialStartMs = 0;
+static volatile uint32_t sdpMs = 0;      // how long the last SDP lookup took
+static volatile bool sdpDone = false;    // the lookup finished during this dial
 // What the PC calls its serial service, from SDP. Windows only offers the service while
 // an app has the Incoming port open, so the last name seen is kept in NVS: after a restart
 // the screen can still say which port to open.
@@ -439,6 +449,30 @@ static void drawBattery(int cx, int top) {
   oled->drawStr(cx - oled->getStrWidth(t) / 2, top + 14, t);
 }
 
+// The link label. "Oscar linked" only when OscarWatch is getting a position: linked with no
+// fix reads as working when there's nothing to plot. Not linked: say whether the PC answered.
+// If it did, nothing has its port open, and the name Windows gives the service ("COM11") is
+// the port to open in OscarWatch.
+static void linkLabel(char *bt, size_t n) {
+  if (btConnected) {
+    if (!gpsPresent) {
+      strlcpy(bt, "no GPS", n);
+    } else {
+      strlcpy(bt, fixQuality > 0 ? "Oscar linked" : "awaiting sats", n);
+    }
+  } else if (dialResult == DIAL_NO_PORT) {
+    if (strncmp(pcServiceName, "COM", 3) == 0) {
+      snprintf(bt, n, "%s closed", pcServiceName);
+    } else {
+      strlcpy(bt, "port closed", n);
+    }
+  } else if (dialResult == DIAL_NO_PC) {
+    strlcpy(bt, "PC not found", n);
+  } else {
+    strlcpy(bt, homeCount ? "dialling" : "not linked", n);  // not linked: nothing paired yet
+  }
+}
+
 // UTC, grid, satellites in use and the link.
 static void drawMainPage(int dx, int dy) {
   // Time plus a small "UTC" tag on the same baseline, centred as a pair
@@ -466,16 +500,8 @@ static void drawMainPage(int dx, int dy) {
   snprintf(n, sizeof(n), "%u sats", satellites);
   oled->setFont(u8g2_font_6x10_tr);
   oled->drawStr(dx, 61 + dy, n);
-  // Not linked but the PC has told us its port (Windows names the service "COM11" etc):
-  // that's the port to pick in OscarWatch, so say so.
   char bt[24];
-  if (btConnected) {
-    strcpy(bt, "Oscar linked");
-  } else if (strncmp(pcServiceName, "COM", 3) == 0) {
-    snprintf(bt, sizeof(bt), "use %s", pcServiceName);
-  } else {
-    strcpy(bt, dialling ? "dialling" : "not linked");
-  }
+  linkLabel(bt, sizeof(bt));
   oled->drawStr(126 - oled->getStrWidth(bt) + dx, 61 + dy, bt);
 }
 
@@ -721,10 +747,15 @@ static void dialTask(void *) {
   int next = 0;
   for (;;) {
     if (!SerialBT.hasClient()) {
+      sdpDone = false;
+      dialStartMs = millis();
       dialling = true;
       bool ok = SerialBT.connect(homes[next % homeCount]);
       dialling = false;
-      if (!ok) {
+      if (ok) {
+        dialResult = DIAL_NONE;
+      } else {
+        dialResult = sdpDone && sdpMs < PC_ANSWER_MS ? DIAL_NO_PORT : DIAL_NO_PC;
         dialFailures++;
         next++;
         vTaskDelay(pdMS_TO_TICKS(DIAL_RETRY_MS));
@@ -734,11 +765,14 @@ static void dialTask(void *) {
   }
 }
 
-// Runs in the Bluetooth task after the library's own handler. Keeps the name the PC gives
-// its serial port service when the dialler looks it up.
+// Runs in the Bluetooth task after the library's own handler. Times the dialler's SDP lookup
+// and keeps the name the PC gives its serial port service.
 static void sppEvent(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
-  if (event == ESP_SPP_DISCOVERY_COMP_EVT && param->disc_comp.status == ESP_SPP_SUCCESS &&
-      param->disc_comp.scn_num > 0 && param->disc_comp.service_name[0]) {
+  if (event != ESP_SPP_DISCOVERY_COMP_EVT) return;
+  sdpMs = millis() - dialStartMs;
+  sdpDone = true;
+  if (param->disc_comp.status == ESP_SPP_SUCCESS && param->disc_comp.scn_num > 0 &&
+      param->disc_comp.service_name[0]) {
     strlcpy(pcServiceName, param->disc_comp.service_name[0], sizeof(pcServiceName));
   }
 }
@@ -878,12 +912,34 @@ void loop() {
     if (prefs.getString("pcport", "") != reportedService) prefs.putString("pcport", reportedService);
   }
 
-  // The first failed dial, then every 20th, so a PC that's off doesn't flood the log
+  // Each change in why dials fail, then every 20th failure, so a PC that's off doesn't flood
+  // the log. The SDP time is there to check PC_ANSWER_MS against.
   static uint32_t reportedFailures = 0;
+  static DialResult reportedResult = DIAL_NONE;
+  if (btConnected) reportedResult = DIAL_NONE;
   uint32_t failures = dialFailures;
-  if (failures != reportedFailures && (failures == 1 || failures % 20 == 0)) {
+  DialResult result = dialResult;
+  if (failures != reportedFailures && (result != reportedResult || failures % 20 == 0)) {
     reportedFailures = failures;
-    status("Dial failed (%u so far): is the PC on, with its Incoming port open?", failures);
+    reportedResult = result;
+    if (result == DIAL_NO_PORT) {
+      status("Dial %u: PC answered in %u ms, but nothing has %s open", failures, sdpMs,
+             *pcServiceName ? pcServiceName : "its Incoming port");
+    } else if (sdpDone) {
+      status("Dial %u: PC didn't answer (%u ms): off, asleep, out of range or Bluetooth off",
+             failures, sdpMs);
+    } else {
+      status("Dial %u: PC didn't answer: off, asleep, out of range or Bluetooth off", failures);
+    }
+  }
+
+  // The screen's link label, logged when it changes, so it can be checked without the screen
+  static char reportedLabel[24] = "";
+  char label[24];
+  linkLabel(label, sizeof(label));
+  if (strcmp(label, reportedLabel) != 0) {
+    strlcpy(reportedLabel, label, sizeof(reportedLabel));
+    status("Link label: %s", label);
   }
 
   if (oled && (redrawDue || millis() - lastDrawMs > OLED_REDRAW_MS + 500)) {

@@ -1,18 +1,30 @@
 # Changelog
 
-## [Unreleased]
-
-### Added
-- README troubleshooting: removing and re-pairing the board in Windows deletes the Incoming
-  port, which has to be added again. Docs only, no version bump.
+## [1.5.0] - 2026-11-04
 
 ### Changed
+- The link label says why the board isn't linked. "COM11 closed": the PC answered, but nothing
+  has its Incoming port open. "PC not found": no answer (off, asleep, out of range or Bluetooth
+  off). Bluedroid reports both with the same failure status, so the dialler times the PC's SDP
+  answer: about a second when it's there, the 5.12 s page timeout when it isn't
+  (`PC_ANSWER_MS`). Replaces "use COM11", which was shown in both cases and read as if the
+  board needed fixing. On 3 Nov that led to a re-pair, which deleted the port. Tested on 4 Nov:
+  OscarWatch closed gave "COM11 closed" (answer in 147 ms), Bluetooth off gave "PC not found"
+  (5140 ms), and reopening OscarWatch relinked in 7 s.
+- "dialling" while a paired board redials, "not linked" only when nothing is paired.
+- "Oscar linked" only with a fix. Linked without one reads "awaiting sats": on 4 Nov the label
+  said linked while the GPS indoors had no fix, so OscarWatch had nothing to show.
+- The USB log gives the reason and the SDP time on each change, then every 20th failure, and
+  logs the link label whenever it changes (`Link label: ...`).
 - Enclosure, from Javier's test fit of the cut box:
   - L2 loses its USB cut-out: the FireBeetle rests on L2, so it was all below the board.
   - The USB opening in L3 and L4 moves 3 mm towards the battery side (x 48.3 to 63.05) to
     line up with the socket.
   - L6 loses the small back-wall slot copied from the print. Not needed.
-  No firmware change.
+
+### Added
+- README troubleshooting: removing and re-pairing the board in Windows deletes the Incoming
+  port, which has to be added again.
 
 ## [1.4.1] - 2026-11-03
 

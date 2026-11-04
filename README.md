@@ -48,7 +48,7 @@ nothing installed: Connect, set the address, pick the file, Program. Or with
 [esptool](https://github.com/espressif/esptool):
 
 ```
-esptool.py --chip esp32 write_flash 0x0 OscarGPS-1.4.1-esp32-full.bin
+esptool.py --chip esp32 write_flash 0x0 OscarGPS-1.5.0-esp32-full.bin
 ```
 
 ## Build and flash
@@ -96,9 +96,10 @@ altogether.
 4. Restart the board. It finds the PC in its list of paired devices and dials it within a few
    seconds.
 
-The screen shows which port to use: when it isn't linked yet it reads `use COM11` (or whatever
-number Windows gave the Incoming port), learned from the PC itself, so it follows Windows if
-the number ever changes. The baud rate setting on a Bluetooth COM port is ignored.
+The screen shows which port to use: when the PC is there but nothing has the port open it reads
+`COM11 closed` (or whatever number Windows gave the Incoming port), learned from the PC itself,
+so it follows Windows if the number ever changes. The baud rate setting on a Bluetooth COM port
+is ignored.
 
 A board that has never been paired offers its serial port the old way until it is, so step 2
 works on a fresh board. To go back to the PC dialling the board, set `BT_DIAL_HOME` to 0 in
@@ -159,9 +160,20 @@ as normal, and a screen plugged in later is picked up within 5 seconds.
 The screen is drawn rotated 180 degrees to suit the enclosure. If yours reads upside down, set
 `OLED_ROTATION` to `U8G2_R0` in `src/main.cpp`.
 
-"Oscar linked" means a Bluetooth client has the serial port open ("not linked" otherwise). The
-board can't tell which program that is. To slow burn-in, the contrast is turned down and the
-text moves a pixel or two each minute.
+The link label says what to do about it:
+
+| Label | Meaning |
+|-------|---------|
+| `Oscar linked` | A program on the PC has the serial port open and is getting a position. The board can't tell which program |
+| `awaiting sats` | Linked, but the GPS has no fix yet, so the program has nothing to plot. Give it more sky |
+| `COM11 closed` | The PC answered, but nothing has its Incoming port open. Start OscarWatch, or check it's set to that port |
+| `PC not found` | The PC didn't answer: off, asleep, out of range or Bluetooth turned off |
+| `dialling` | The first dial since a restart or a dropout is still going |
+| `not linked` | Nothing paired yet |
+
+The board tells the two failures apart by how long the PC takes to answer, so allow one dial
+(up to 15 s) after a change for the label to catch up. To slow burn-in, the contrast is turned
+down and the text moves a pixel or two each minute.
 
 ### Boot screen
 
@@ -256,8 +268,10 @@ Keep NTP for that.
   point the app at it. Until the first link the screen shows the old number, so go by the COM
   Ports tab this time. You rarely need to re-pair: if the link drops, check the app has the
   Incoming port open first.
-- **Screen says "dialling" for ages:** the PC is off, out of range, or has no Incoming port.
-  The USB log says so too (`Dial failed ... is the PC on, with its Incoming port open?`).
+- **Screen says "PC not found":** the PC is off, asleep, out of range or has Bluetooth off. The
+  USB log has the same (`PC didn't answer`).
+- **Screen says "COM11 closed" with OscarWatch running:** OscarWatch is set to a different port,
+  or it gave up on the port. Check Settings, GPS, and restart OscarWatch if it's set right.
 - **Not in the Bluetooth device list:** check that the LED is doing something. Bluetooth only
   starts after the firmware boots.
 - **No fix indoors:** the PA1010D's patch antenna needs a view of the sky. Try a windowsill. From
